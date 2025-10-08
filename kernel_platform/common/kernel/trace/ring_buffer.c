@@ -7469,7 +7469,7 @@ int ring_buffer_map(struct trace_buffer *buffer, int cpu,
 		rb_free_meta_page(cpu_buffer);
 		atomic_dec(&cpu_buffer->resize_disabled);
 	}
-	return 0;
+	return err;
 }
 
 /*
