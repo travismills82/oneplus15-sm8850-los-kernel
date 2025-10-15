@@ -1009,6 +1009,9 @@ err_deinit:
 	if (pci->pp.ops->deinit)
 		pci->pp.ops->deinit(&pci->pp);
 
+	if (pci->pp.ops->post_init)
+		pci->pp.ops->post_init(&pci->pp);
+
 	return ret;
 }
 EXPORT_SYMBOL_GPL(dw_pcie_resume_noirq);
