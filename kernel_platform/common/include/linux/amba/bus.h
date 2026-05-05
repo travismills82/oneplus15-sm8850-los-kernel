@@ -78,7 +78,7 @@ struct amba_device {
 	 */
 	const char		*driver_override;
 
-	ANDROID_KABI_RESERVE(1);
+	ANDROID_KABI_USE(1, spinlock_t driver_override_lock);
 };
 
 struct amba_driver {

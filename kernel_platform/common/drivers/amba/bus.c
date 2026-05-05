@@ -88,10 +88,38 @@ static ssize_t driver_override_show(struct device *_dev,
 	struct amba_device *dev = to_amba_device(_dev);
 	ssize_t len;
 
-	device_lock(_dev);
-	len = sprintf(buf, "%s\n", dev->driver_override);
-	device_unlock(_dev);
+	spin_lock(&dev->driver_override_lock);
+	len = sysfs_emit(buf, "%s\n", dev->driver_override);
+	spin_unlock(&dev->driver_override_lock);
 	return len;
+}
+
+static int amba_set_driver_override(struct amba_device *dev,
+				    const char *buf, size_t count)
+{
+	const char *new, *old;
+	char *cp;
+	size_t len;
+
+	if (!buf || count >= PAGE_SIZE - 1)
+		return -EINVAL;
+
+	len = strlen(buf);
+	cp = strnchr(buf, len, '\n');
+	if (cp)
+		len = cp - buf;
+
+	new = len ? kstrndup(buf, len, GFP_KERNEL) : NULL;
+	if (len && !new)
+		return -ENOMEM;
+
+	spin_lock(&dev->driver_override_lock);
+	old = dev->driver_override;
+	dev->driver_override = new;
+	spin_unlock(&dev->driver_override_lock);
+
+	kfree(old);
+	return 0;
 }
 
 static ssize_t driver_override_store(struct device *_dev,
@@ -101,7 +129,7 @@ static ssize_t driver_override_store(struct device *_dev,
 	struct amba_device *dev = to_amba_device(_dev);
 	int ret;
 
-	ret = driver_set_override(_dev, &dev->driver_override, buf, count);
+	ret = amba_set_driver_override(dev, buf, count);
 	if (ret)
 		return ret;
 
@@ -209,6 +237,7 @@ static int amba_match(struct device *dev, const struct device_driver *drv)
 {
 	struct amba_device *pcdev = to_amba_device(dev);
 	const struct amba_driver *pcdrv = to_amba_driver(drv);
+	int ret = -1;
 
 	mutex_lock(&pcdev->periphid_lock);
 	if (!pcdev->periphid) {
@@ -230,8 +259,12 @@ static int amba_match(struct device *dev, const struct device_driver *drv)
 	mutex_unlock(&pcdev->periphid_lock);
 
 	/* When driver_override is set, only bind to the matching driver */
+	spin_lock(&pcdev->driver_override_lock);
 	if (pcdev->driver_override)
-		return !strcmp(pcdev->driver_override, drv->name);
+		ret = !strcmp(pcdev->driver_override, drv->name);
+	spin_unlock(&pcdev->driver_override_lock);
+	if (ret >= 0)
+		return ret;
 
 	return amba_lookup(pcdrv->id_table, pcdev) != NULL;
 }
@@ -536,6 +569,7 @@ static void amba_device_release(struct device *dev)
 	if (d->res.parent)
 		release_resource(&d->res);
 	mutex_destroy(&d->periphid_lock);
+	kfree(d->driver_override);
 	kfree(d);
 }
 
@@ -591,6 +625,7 @@ static void amba_device_initialize(struct amba_device *dev, const char *name)
 	dev->dev.dma_parms = &dev->dma_parms;
 	dev->res.name = dev_name(&dev->dev);
 	mutex_init(&dev->periphid_lock);
+	spin_lock_init(&dev->driver_override_lock);
 }
 
 /**
