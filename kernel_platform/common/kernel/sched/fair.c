@@ -6161,7 +6161,6 @@ static bool throttle_cfs_rq(struct cfs_rq *cfs_rq)
 
 	/* At this point se is NULL and we are at root level*/
 	sub_nr_running(rq, queued_delta);
-
 done:
 	/*
 	 * Note: distribution will already see us throttled via the
