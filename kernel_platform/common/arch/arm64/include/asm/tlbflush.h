@@ -82,20 +82,9 @@ static inline unsigned long get_trans_granule(void)
 
 #ifdef CONFIG_ARM64_ERRATUM_4193714
 
+extern cpumask_t sme_active_cpus;
+
 void sme_do_dvmsync(const struct cpumask *mask);
-
-/*
- * Keep the exact OOS 16.0.10.601 reserve declaration visible to Rust and
- * external modules while using the slot as the 6.12.89 per-task SME DVMSync
- * mask through an internal typed accessor.
- */
-static inline cpumask_var_t *task_sme_dvmsync_maskp(struct task_struct *tsk)
-{
-	BUILD_BUG_ON(sizeof(cpumask_var_t) >
-		     sizeof(tsk->__donotuse_b448672457));
-
-	return (cpumask_var_t *)&tsk->__donotuse_b448672457;
-}
 
 static inline void sme_dvmsync(struct mm_struct *mm)
 {
@@ -105,50 +94,12 @@ static inline void sme_dvmsync(struct mm_struct *mm)
 	sme_do_dvmsync(mm_cpumask(mm));
 }
 
-static inline void sme_dvmsync_add_pending(struct arch_tlbflush_unmap_batch *batch,
-					   struct mm_struct *mm)
+static inline void sme_dvmsync_batch(void)
 {
-	struct tlbflush_unmap_batch *ubc = container_of(batch, struct tlbflush_unmap_batch, arch);
-	struct task_struct *tsk = container_of(ubc, struct task_struct, tlb_ubc);
-	cpumask_var_t *maskp = task_sme_dvmsync_maskp(tsk);
-
 	if (!alternative_has_cap_unlikely(ARM64_WORKAROUND_4193714))
 		return;
 
-	/*
-	 * Order the mm_cpumask() read after the hardware DVMSync.
-	 */
-	dsb(ish);
-	if (cpumask_empty(mm_cpumask(mm)))
-		return;
-
-	/*
-	 * Allocate the batch cpumask on first use. Fall back to an immediate
-	 * IPI for this mm in case of failure.
-	 */
-	if (!cpumask_available(*maskp) &&
-	    !zalloc_cpumask_var(maskp, GFP_ATOMIC)) {
-		sme_do_dvmsync(mm_cpumask(mm));
-		return;
-	}
-
-	cpumask_or(*maskp, *maskp, mm_cpumask(mm));
-}
-
-static inline void sme_dvmsync_batch(struct arch_tlbflush_unmap_batch *batch)
-{
-	struct tlbflush_unmap_batch *ubc = container_of(batch, struct tlbflush_unmap_batch, arch);
-	struct task_struct *tsk = container_of(ubc, struct task_struct, tlb_ubc);
-	cpumask_var_t *maskp = task_sme_dvmsync_maskp(tsk);
-
-	if (!alternative_has_cap_unlikely(ARM64_WORKAROUND_4193714))
-		return;
-
-	if (!cpumask_available(*maskp))
-		return;
-
-	sme_do_dvmsync(*maskp);
-	cpumask_clear(*maskp);
+	sme_do_dvmsync(&sme_active_cpus);
 }
 
 #else
@@ -156,11 +107,7 @@ static inline void sme_dvmsync_batch(struct arch_tlbflush_unmap_batch *batch)
 static inline void sme_dvmsync(struct mm_struct *mm)
 {
 }
-static inline void sme_dvmsync_add_pending(struct arch_tlbflush_unmap_batch *batch,
-					   struct mm_struct *mm)
-{
-}
-static inline void sme_dvmsync_batch(struct arch_tlbflush_unmap_batch *batch)
+static inline void sme_dvmsync_batch(void)
 {
 }
 
@@ -278,11 +225,11 @@ static inline void __tlbi_sync_s1ish(struct mm_struct *mm)
 	sme_dvmsync(mm);
 }
 
-static inline void __tlbi_sync_s1ish_batch(struct arch_tlbflush_unmap_batch *batch)
+static inline void __tlbi_sync_s1ish_batch(void)
 {
 	dsb(ish);
 	__repeat_tlbi_sync(vale1is, 0);
-	sme_dvmsync_batch(batch);
+	sme_dvmsync_batch();
 }
 
 static inline void __tlbi_sync_s1ish_kernel(void)
@@ -438,7 +385,6 @@ static inline void arch_tlbbatch_add_pending(struct arch_tlbflush_unmap_batch *b
 					     unsigned long uaddr)
 {
 	__flush_tlb_page_nosync(mm, uaddr);
-	sme_dvmsync_add_pending(batch, mm);
 }
 
 /*
@@ -464,7 +410,7 @@ static inline void arch_flush_tlb_batched_pending(struct mm_struct *mm)
  */
 static inline void arch_tlbbatch_flush(struct arch_tlbflush_unmap_batch *batch)
 {
-	__tlbi_sync_s1ish_batch(batch);
+	__tlbi_sync_s1ish_batch();
 }
 
 /*
