@@ -982,6 +982,7 @@ static int __do_ffa_mem_xfer(const u64 func_id,
 	u64 ffa_handle;
 	bool is_lend = func_id == FFA_FN64_MEM_LEND;
 	struct ffa_handle *handle = NULL;
+	size_t mem_region_len = FFA_MEM_REGION_SZ(hyp_ffa_version);
 
 	if (addr_mbz || npages_mbz || fraglen > len ||
 	    fraglen > KVM_FFA_MBOX_NR_PAGES * PAGE_SIZE) {
@@ -989,8 +990,7 @@ static int __do_ffa_mem_xfer(const u64 func_id,
 		return 0;
 	}
 
-	if (fraglen < sizeof(struct ffa_mem_region) +
-		      sizeof(struct ffa_mem_region_attributes)) {
+	if (fraglen < mem_region_len + ffa_emad_size_get(hyp_ffa_version)) {
 		ffa_to_smccc_error(res, FFA_RET_INVALID_PARAMETERS);
 		return 0;
 	}
@@ -1025,9 +1025,8 @@ static int __do_ffa_mem_xfer(const u64 func_id,
 	memcpy(buf, ffa_buf->tx, fraglen);
 
 	em_mem_access_off = ffa_mem_desc_offset(buf, 0, hyp_ffa_version);
-	if (em_mem_access_off >
-	    KVM_FFA_MBOX_NR_PAGES * PAGE_SIZE - sizeof(struct ffa_mem_region_attributes)) {
-		ret = FFA_RET_INVALID_PARAMETERS;
+	if ((u64)em_mem_access_off + ffa_emad_size_get(hyp_ffa_version) > fraglen) {
+		ffa_to_smccc_error(res, FFA_RET_INVALID_PARAMETERS);
 		goto out_unlock;
 	}
 
@@ -1217,9 +1216,9 @@ static void do_ffa_mem_reclaim(struct arm_smccc_1_2_regs *res,
 	fraglen = res->a2;
 
 	em_mem_access_off = ffa_mem_desc_offset(buf, 0, hyp_ffa_version);
-	if (em_mem_access_off >
-	    KVM_FFA_MBOX_NR_PAGES * PAGE_SIZE - sizeof(struct ffa_mem_region_attributes)) {
+	if ((u64)em_mem_access_off + ffa_emad_size_get(hyp_ffa_version) > fraglen) {
 		ret = FFA_RET_INVALID_PARAMETERS;
+		ffa_rx_release(res);
 		goto out_unlock;
 	}
 
