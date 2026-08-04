@@ -65,7 +65,7 @@ struct file *backing_file_open_with_user_file(const struct file *user_file,
 					      const struct path *real_path,
 					      const struct cred *cred)
 {
-	return __backing_file_open(&user_file->f_path, user_file, flags,
+	return __backing_file_open(file_user_path(user_file), user_file, flags,
 				   real_path, cred);
 }
 
