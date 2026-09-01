@@ -71,23 +71,35 @@ static phys_addr_t stage2_range_addr_end(phys_addr_t addr, phys_addr_t end)
  * CONFIG_LOCKUP_DETECTOR, CONFIG_LOCKDEP. Additionally, holding the lock too
  * long will also starve other vCPUs.
  */
-static int stage2_apply_range(struct kvm_s2_mmu *mmu, phys_addr_t addr,
+static int stage2_apply_range(struct kvm_s2_mmu *mmu, phys_addr_t start,
 			      phys_addr_t end,
 			      int (*fn)(struct kvm_s2_mmu *, u64, u64),
 			      bool resched)
 {
 	struct kvm *kvm = kvm_s2_mmu_to_kvm(mmu);
+	bool lock_dropped = false;
+	phys_addr_t addr = start;
 	int ret;
 	u64 next;
 
 	do {
+		/*
+		 * The ordinary stage-2 page tables may be torn down while the
+		 * lock is dropped.  Protected KVM uses the downstream hyp
+		 * dispatcher and does not require a host mmu->pgt here.
+		 */
+		if (!is_protected_kvm_enabled() && !mmu->pgt)
+			return lock_dropped ? 0 : -EINVAL;
+
 		next = stage2_range_addr_end(addr, end);
 		ret = fn(mmu, addr, next - addr);
 		if (ret)
 			break;
 
-		if (resched && next != end)
+		if (resched && next != end) {
 			cond_resched_rwlock_write(&kvm->mmu_lock);
+			lock_dropped = true;
+		}
 	} while (addr = next, addr != end);
 
 	return ret;
