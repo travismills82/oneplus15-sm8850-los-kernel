@@ -338,6 +338,7 @@ int mp_dmabuf_devmem_init(struct page_pool *pool)
 
 	if (pool->dma_sync)
 		return -EOPNOTSUPP;
+	pool->dma_sync_for_cpu = false;
 
 	if (pool->p.order != 0)
 		return -E2BIG;
