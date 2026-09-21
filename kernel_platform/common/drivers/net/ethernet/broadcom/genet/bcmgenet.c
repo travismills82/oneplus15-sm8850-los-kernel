@@ -4066,6 +4066,12 @@ static int bcmgenet_probe(struct platform_device *pdev)
 	for (i = 0; i <= priv->hw_params->rx_queues; i++)
 		priv->rx_rings[i].rx_max_coalesced_frames = 1;
 
+	/* Initialize u64 stats seq counter for 32bit machines */
+	for (i = 0; i <= GENET_MAX_MQ_CNT; i++) {
+		u64_stats_init(&priv->rx_rings[i].stats64.syncp);
+		u64_stats_init(&priv->tx_rings[i].stats64.syncp);
+	}
+
 	/* libphy will determine the link state */
 	netif_carrier_off(dev);
 
