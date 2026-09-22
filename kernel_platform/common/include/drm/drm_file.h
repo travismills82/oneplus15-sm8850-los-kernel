@@ -485,6 +485,7 @@ struct drm_memory_stats {
 
 enum drm_gem_object_status;
 
+int drm_memory_stats_is_zero(const struct drm_memory_stats *stats);
 void drm_fdinfo_print_size(struct drm_printer *p,
 			   const char *prefix,
 			   const char *stat,
