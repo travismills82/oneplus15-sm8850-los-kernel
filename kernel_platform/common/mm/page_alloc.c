@@ -906,6 +906,17 @@ static int zone_max_order(struct zone *zone)
 	return max_order;
 }
 
+static void change_pageblock_range(struct page *pageblock_page,
+				   int start_order, int migratetype)
+{
+	int nr_pageblocks = 1 << (start_order - pageblock_order);
+
+	while (nr_pageblocks--) {
+		set_pageblock_migratetype(pageblock_page, migratetype);
+		pageblock_page += pageblock_nr_pages;
+	}
+}
+
 /*
  * Freeing function for a buddy system allocator.
  *
@@ -929,17 +940,6 @@ static int zone_max_order(struct zone *zone)
  *
  * -- nyc
  */
-
-static void change_pageblock_range(struct page *pageblock_page,
-				  int start_order, int migratetype)
-{
-	int nr_pageblocks = 1 << (start_order - pageblock_order);
-
-	while (nr_pageblocks--) {
-		set_pageblock_migratetype(pageblock_page, migratetype);
-		pageblock_page += pageblock_nr_pages;
-	}
-}
 
 static inline void __free_one_page(struct page *page,
 		unsigned long pfn,
@@ -1865,7 +1865,7 @@ inline void post_alloc_hook(struct page *page, unsigned int order,
 	pgalloc_tag_add(page, current, 1 << order);
 }
 
-static void prep_new_page(struct page *page, unsigned int order, gfp_t gfp_flags,
+void prep_new_page(struct page *page, unsigned int order, gfp_t gfp_flags,
 							unsigned int alloc_flags)
 {
 	post_alloc_hook(page, order, gfp_flags);
@@ -1886,6 +1886,7 @@ static void prep_new_page(struct page *page, unsigned int order, gfp_t gfp_flags
 		clear_page_pfmemalloc(page);
 	trace_android_vh_test_clear_look_around_ref(page);
 }
+EXPORT_SYMBOL_GPL(prep_new_page);
 
 #ifdef CONFIG_TRANSPARENT_HUGEPAGE
 void prep_new_hpage(struct page *page, gfp_t gfp_flags, unsigned int alloc_flags)
@@ -2486,6 +2487,7 @@ __rmqueue(struct zone *zone, unsigned int order, int migratetype,
 			}
 		}
 	}
+
 	return NULL;
 }
 
@@ -2514,7 +2516,8 @@ static int rmqueue_bulk(struct zone *zone, unsigned int order,
 		if (cma_redirect_restricted() && is_migrate_cma(migratetype))
 			page = __rmqueue_cma_fallback(zone, order);
 		else
-			page = __rmqueue(zone, order, migratetype, alloc_flags, &rmqm);
+			page = __rmqueue(zone, order, migratetype, alloc_flags,
+					 &rmqm);
 
 		if (unlikely(page == NULL))
 			break;
@@ -3150,16 +3153,14 @@ struct page *rmqueue_buddy(struct zone *preferred_zone, struct zone *zone,
 		if (alloc_flags & ALLOC_HIGHATOMIC)
 			page = __rmqueue_smallest(zone, order, MIGRATE_HIGHATOMIC);
 		if (!page) {
+			enum rmqueue_mode rmqm = RMQUEUE_NORMAL;
 			if (cma_redirect_restricted() &&
 			    alloc_flags & ALLOC_CMA)
 				page = __rmqueue_cma_fallback(zone, order);
 
-			if (!page) {
-				enum rmqueue_mode rmqm = RMQUEUE_NORMAL;
-
+			if (!page)
 				page = __rmqueue(zone, order, migratetype,
 						 alloc_flags, &rmqm);
-			}
 			/*
 			 * If the allocation fails, allow OOM handling and
 			 * order-0 (atomic) allocs access to HIGHATOMIC
@@ -4432,8 +4433,10 @@ __alloc_pages_direct_reclaim(gfp_t gfp_mask, unsigned int order,
 	unsigned long pflags;
 	bool drained = false;
 	bool skip_pcp_drain = false;
+	u64 stime = 0;
 
 	trace_android_vh_mm_direct_reclaim_enter(order);
+	trace_android_vh_mm_direct_reclaim_start(&stime);
 	psi_memstall_enter(&pflags);
 	*did_some_progress = __perform_reclaim(gfp_mask, order, ac);
 	if (unlikely(!(*did_some_progress)))
@@ -4460,6 +4463,7 @@ retry:
 out:
 	psi_memstall_leave(&pflags);
 	trace_android_vh_mm_direct_reclaim_exit(*did_some_progress, retry_times);
+	trace_android_vh_mm_direct_reclaim_end(order, stime);
 	return page;
 }
 
@@ -4862,6 +4866,7 @@ restart:
 
 retry:
 	retry_loop_count++;
+
 	/*
 	 * Deal with possible cpuset update races or zonelist updates to avoid
 	 * infinite retries.
@@ -4869,6 +4874,7 @@ retry:
 	if (check_retry_cpuset(cpuset_mems_cookie, ac) ||
 	    check_retry_zonelist(zonelist_iter_cookie))
 		goto restart;
+
 	/* Ensure kswapd doesn't accidentally go to sleep as long as we loop */
 	if (alloc_flags & ALLOC_KSWAPD)
 		wake_all_kswapds(order, gfp_mask, ac);
@@ -7022,6 +7028,9 @@ int __alloc_contig_migrate_range(struct compact_control *cc,
 	unsigned long total_migrated = 0;
 	unsigned long total_reclaimed = 0;
 
+	if (cc->gfp_mask & __GFP_NORETRY)
+		max_tries = 1;
+
 	lru_cache_disable();
 
 	while (pfn < end || !list_empty(&cc->migratepages)) {
@@ -7093,7 +7102,7 @@ int __alloc_contig_migrate_range(struct compact_control *cc,
 	return (ret < 0) ? ret : 0;
 }
 
-static void split_free_pages(struct list_head *list, gfp_t gfp_mask)
+static void split_free_pages(struct list_head *list)
 {
 	int order;
 
@@ -7104,7 +7113,7 @@ static void split_free_pages(struct list_head *list, gfp_t gfp_mask)
 		list_for_each_entry_safe(page, next, &list[order], lru) {
 			int i;
 
-			post_alloc_hook(page, order, gfp_mask);
+			post_alloc_hook(page, order, __GFP_MOVABLE);
 			set_page_refcounted(page);
 			if (!order)
 				continue;
@@ -7137,8 +7146,7 @@ unsigned long isolate_and_split_free_page(struct page *page,
 	set_page_private(page, order);
 	list_add(&page->lru, &list[order]);
 
-	/* Preserve the historical semantics of this Android/OEM helper. */
-	split_free_pages(list, __GFP_MOVABLE);
+	split_free_pages(list);
 
 	return isolated;
 }
@@ -7149,7 +7157,6 @@ static int __alloc_contig_verify_gfp_mask(gfp_t gfp_mask, gfp_t *gfp_cc_mask)
 {
 	const gfp_t reclaim_mask = __GFP_IO | __GFP_FS | __GFP_RECLAIM;
 	const gfp_t action_mask = __GFP_COMP | __GFP_RETRY_MAYFAIL | __GFP_NOWARN |
-				  __GFP_ZERO | __GFP_ZEROTAGS | __GFP_SKIP_ZERO |
 				  __GFP_SKIP_KASAN;
 	const gfp_t cc_action_mask = __GFP_RETRY_MAYFAIL | __GFP_NOWARN;
 
@@ -7213,7 +7220,11 @@ int alloc_contig_range_noprof(unsigned long start, unsigned long end,
 		.nr_migratepages = 0,
 		.order = -1,
 		.zone = page_zone(pfn_to_page(start)),
-		.mode = MIGRATE_SYNC,
+		/*
+		 * Use MIGRATE_ASYNC for __GFP_NORETRY requests as it never
+		 * blocks.
+		 */
+		.mode = gfp_mask & __GFP_NORETRY ? MIGRATE_ASYNC : MIGRATE_SYNC,
 		.ignore_skip_hint = true,
 		.no_set_skip_hint = true,
 		.alloc_contig = true,
@@ -7300,7 +7311,7 @@ int alloc_contig_range_noprof(unsigned long start, unsigned long end,
 	}
 
 	if (!(gfp_mask & __GFP_COMP)) {
-		split_free_pages(cc.freepages, gfp_mask);
+		split_free_pages(cc.freepages);
 
 		/* Free head and tail (if any) */
 		if (start != outer_start)

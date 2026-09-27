@@ -86,7 +86,7 @@ enum {
 
 /* flags that prevent us from merging requests: */
 #define RQF_NOMERGE_FLAGS \
-	(RQF_STARTED | RQF_FLUSH_SEQ | RQF_SPECIAL_PAYLOAD)
+	(RQF_STARTED | RQF_FLUSH_SEQ | RQF_DONTPREP | RQF_SPECIAL_PAYLOAD)
 
 enum mq_rq_state {
 	MQ_RQ_IDLE		= 0,
@@ -156,15 +156,6 @@ struct request {
 	struct bio_crypt_ctx *crypt_ctx;
 	struct blk_crypto_keyslot *crypt_keyslot;
 #endif
-
-	/*
-	 * OOS 16.0.10.500 binary-module compatibility mirrors.  Native 6.12.26
-	 * block code uses the attached bio for these values; keep the historical
-	 * fields and offsets for OEM modules built against the qualified 6.12.25
-	 * request layout.
-	 */
-	enum rw_hint write_hint;
-	unsigned short ioprio;
 
 	enum mq_rq_state state;
 	atomic_t ref;
@@ -1029,7 +1020,6 @@ static inline void blk_rq_bio_prep(struct request *rq, struct bio *bio,
 	rq->nr_phys_segments = nr_segs;
 	rq->__data_len = bio->bi_iter.bi_size;
 	rq->bio = rq->biotail = bio;
-	rq->ioprio = bio_prio(bio);
 }
 
 void blk_mq_hctx_set_fq_lock_class(struct blk_mq_hw_ctx *hctx,
@@ -1215,5 +1205,16 @@ static inline int blk_rq_map_sg(struct request_queue *q, struct request *rq,
 	return __blk_rq_map_sg(q, rq, sglist, &last_sg);
 }
 void blk_dump_rq_flags(struct request *, char *);
+
+static inline bool blk_rq_is_seq_zoned_write(struct request *rq)
+{
+	switch (req_op(rq)) {
+	case REQ_OP_WRITE:
+	case REQ_OP_WRITE_ZEROES:
+		return bdev_zone_is_seq(rq->q->disk->part0, blk_rq_pos(rq));
+	default:
+		return false;
+	}
+}
 
 #endif /* BLK_MQ_H */

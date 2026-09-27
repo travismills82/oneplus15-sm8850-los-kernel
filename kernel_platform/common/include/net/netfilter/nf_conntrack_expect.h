@@ -40,7 +40,7 @@ struct nf_conntrack_expect {
 			 struct nf_conntrack_expect *this);
 
 	/* Helper to assign to new connection */
-	struct nf_conntrack_helper __rcu *helper;
+	struct nf_conntrack_helper *helper;
 
 	/* The conntrack of the master connection */
 	struct nf_conn *master;
@@ -60,9 +60,10 @@ struct nf_conntrack_expect {
 	struct rcu_head rcu;
 };
 
-struct net *nf_ct_exp_net(const struct nf_conntrack_expect *exp);
-bool nf_ct_exp_zone_equal_any(const struct nf_conntrack_expect *exp,
-			      const struct nf_conntrack_zone *zone);
+static inline struct net *nf_ct_exp_net(struct nf_conntrack_expect *exp)
+{
+	return nf_ct_net(exp->master);
+}
 
 #define NF_CT_EXP_POLICY_NAME_LEN	16
 
@@ -134,3 +135,4 @@ static inline int nf_ct_expect_related(struct nf_conntrack_expect *expect,
 }
 
 #endif /*_NF_CONNTRACK_EXPECT_H*/
+

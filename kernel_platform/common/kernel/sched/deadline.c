@@ -1850,6 +1850,9 @@ void dl_server_start(struct sched_dl_entity *dl_se)
 	if (!dl_se->dl_runtime || dl_se->dl_server_active)
 		return;
 
+	if (WARN_ON_ONCE(!cpu_online(cpu_of(rq))))
+		return;
+
 	dl_se->dl_server_active = 1;
 	enqueue_dl_entity(dl_se, ENQUEUE_WAKEUP);
 	if (!dl_task(dl_se->rq->curr) || dl_entity_preempt(dl_se, &rq->curr->dl))
@@ -2393,7 +2396,7 @@ static void yield_task_dl(struct rq *rq)
 	 * it and the bandwidth timer will wake it up and will give it
 	 * new scheduling parameters (thanks to dl_yielded=1).
 	 */
-	rq->curr->dl.dl_yielded = 1;
+	rq->donor->dl.dl_yielded = 1;
 
 	update_rq_clock(rq);
 	update_curr_dl(rq);
@@ -2671,6 +2674,22 @@ static void put_prev_task_dl(struct rq *rq, struct task_struct *p, struct task_s
 	if (task_is_blocked(p))
 		return;
 
+	/*
+	 * With proxy-exec its possible the following call
+	 * chain from update_curr_dl() called above has already
+	 * added us to the pushable list:
+	 * update_curr_dl()
+	 * -> update_curr_dl_se()
+	 *    -> enqueue_task_dl()
+	 *       -> enqueue_pushable_dl_task()
+	 *
+	 * So check if we're already added to make sure we don't
+	 * get added twice
+	 */
+#ifdef CONFIG_SMP
+	if (!RB_EMPTY_NODE(&p->pushable_dl_tasks))
+		return;
+#endif
 	if (on_dl_rq(&p->dl) && p->nr_cpus_allowed > 1)
 		enqueue_pushable_dl_task(rq, p);
 }
@@ -2752,7 +2771,7 @@ static int find_later_rq(struct task_struct *sched_ctx, struct task_struct *exec
 	if (unlikely(!later_mask))
 		return -1;
 
-	if (exec_ctx && exec_ctx->nr_cpus_allowed == 1)
+	if (!exec_ctx || exec_ctx->nr_cpus_allowed == 1)
 		return -1;
 
 	/*
@@ -2830,7 +2849,7 @@ static int find_later_rq(struct task_struct *sched_ctx, struct task_struct *exec
 
 static struct task_struct *pick_next_pushable_dl_task(struct rq *rq)
 {
-	struct task_struct *p = NULL;
+	struct task_struct *i, *p = NULL;
 	struct rb_node *next_node;
 
 	if (!has_pushable_dl_tasks(rq))
@@ -2838,15 +2857,17 @@ static struct task_struct *pick_next_pushable_dl_task(struct rq *rq)
 
 	next_node = rb_first_cached(&rq->dl.pushable_dl_tasks_root);
 	while (next_node) {
-		p = __node_2_pdl(next_node);
+		i = __node_2_pdl(next_node);
 		/*
 		 * cpu argument doesn't matter because we treat a -1 result
 		 * (pushable but can't go to cpu0) the same as a 1 result
 		 * (pushable to cpu0). All we care about here is general
 		 * pushability.
 		 */
-		if (task_is_pushable(rq, p, 0))
+		if (task_is_pushable(rq, i, 0)) {
+			p = i;
 			break;
+		}
 
 		next_node = rb_next(next_node);
 	}
@@ -2867,27 +2888,9 @@ static struct task_struct *pick_next_pushable_dl_task(struct rq *rq)
 static inline bool __dl_revalidate_rq_state(struct task_struct *task, struct rq *rq,
 					    struct rq *later)
 {
-	if (!dl_task(task) || is_migration_disabled(task) ||
-	    !cpumask_test_cpu(later->cpu, &task->cpus_mask))
+	if (!dl_task(task))
 		return false;
-
-	/*
-	 * A throttled task is migrated by dl_task_offline_migration() and is
-	 * not expected to be in the pushable tree.  Preserve the complete
-	 * post-unlock state validation for that path.
-	 */
-	if (task->dl.dl_throttled)
-		return task_rq(task) == rq && !task_on_cpu(rq, task) &&
-		       task_on_rq_queued(task);
-
-	/*
-	 * push_dl_task() must still own the head of the pushable tree after
-	 * double_lock_balance() temporarily dropped rq->lock.  Merely finding
-	 * the task queued on this runqueue is insufficient because it may have
-	 * run, migrated, and then been queued again in the meantime.
-	 */
-	return has_pushable_dl_tasks(rq) &&
-	       task == __node_2_pdl(rb_first_cached(&rq->dl.pushable_dl_tasks_root));
+	return __revalidate_rq_state(task, rq, later);
 }
 
 static inline bool dl_revalidate_rq_state(struct task_struct *task, struct rq *rq,

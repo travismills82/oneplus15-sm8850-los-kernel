@@ -563,8 +563,7 @@ static void exit_mm(void)
 	 */
 	smp_mb__after_spinlock();
 	local_irq_disable();
-	task_set_user_dumpable(current,
-			   get_dumpable(mm) == SUID_DUMP_USER);
+	current->user_dumpable = (get_dumpable(mm) == SUID_DUMP_USER);
 	current->mm = NULL;
 	membarrier_update_current_mm(NULL);
 	enter_lazy_tlb(mm, current);
@@ -904,6 +903,7 @@ void __noreturn do_exit(long code)
 
 	seccomp_filter_release(tsk);
 
+	trace_android_vh_lock_task_exit(tsk);
 	acct_update_integrals(tsk);
 	group_dead = atomic_dec_and_test(&tsk->signal->live);
 	if (group_dead) {

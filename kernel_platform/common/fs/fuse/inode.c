@@ -96,7 +96,7 @@ static struct inode *fuse_alloc_inode(struct super_block *sb)
 
 	/* Initialize private data (i.e. everything except fi->inode) */
 	BUILD_BUG_ON(offsetof(struct fuse_inode, inode) != 0);
-	memset((void *)fi + sizeof(fi->inode), 0, sizeof(*fi) - sizeof(fi->inode));
+	memset((void *) fi + sizeof(fi->inode), 0, sizeof(*fi) - sizeof(fi->inode));
 
 	fi->inval_mask = ~0;
 	mutex_init(&fi->mutex);

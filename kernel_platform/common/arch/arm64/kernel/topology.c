@@ -159,7 +159,7 @@ static void amu_scale_freq_tick(void)
 	bool use_amu_fie = true;
 
 	trace_android_vh_use_amu_fie(&use_amu_fie);
-	if (!use_amu_fie)
+	if(!use_amu_fie)
 		return;
 
 	prev_const_cnt = this_cpu_read(arch_const_cycles_prev);

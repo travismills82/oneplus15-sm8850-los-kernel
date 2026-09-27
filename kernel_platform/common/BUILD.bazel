@@ -26,6 +26,7 @@ load(
     "kernel_build",
     "kernel_compile_commands",
     "kernel_kythe",
+    "kernel_module_group",
     "kernel_modules_install",
     "merge_kzip",
     "merged_kernel_uapi_headers",
@@ -170,6 +171,9 @@ filegroup(
             # cscope files
             "cscope.*",
             "ncscope.*",
+
+            # ABI and symbol list files
+            "gki/**",
         ],
     ),
     visibility = ["//visibility:public"],
@@ -183,6 +187,7 @@ filegroup(
         "gki/aarch64/symbols/amlogic",
         "gki/aarch64/symbols/asr",
         "gki/aarch64/symbols/bcmstb",
+        "gki/aarch64/symbols/cix",
         "gki/aarch64/symbols/db845c",
         "gki/aarch64/symbols/desktop",
         "gki/aarch64/symbols/exynos",
@@ -194,15 +199,20 @@ filegroup(
         "gki/aarch64/symbols/kunit",
         "gki/aarch64/symbols/lenovo",
         "gki/aarch64/symbols/meizu",
+        "gki/aarch64/symbols/moto",
         "gki/aarch64/symbols/mtk",
         "gki/aarch64/symbols/mtktv",
+        "gki/aarch64/symbols/nvidia",
         "gki/aarch64/symbols/oplus",
         "gki/aarch64/symbols/pixel",
         "gki/aarch64/symbols/pixel_watch",
         "gki/aarch64/symbols/qcom",
+        "gki/aarch64/symbols/rockchip",
         "gki/aarch64/symbols/rtkstb",
         "gki/aarch64/symbols/rtktv",
+        "gki/aarch64/symbols/syna",
         "gki/aarch64/symbols/tcl",
+        "gki/aarch64/symbols/telechips",
         "gki/aarch64/symbols/transsion",
         "gki/aarch64/symbols/trusty",
         "gki/aarch64/symbols/tuxera",
@@ -210,7 +220,9 @@ filegroup(
         "gki/aarch64/symbols/unisoc",
         "gki/aarch64/symbols/virtual_device",
         "gki/aarch64/symbols/vivo",
+        "gki/aarch64/symbols/wonder",
         "gki/aarch64/symbols/xiaomi",
+        "gki/aarch64/symbols/zte",
     ],
     visibility = ["//visibility:public"],
 )
@@ -239,19 +251,14 @@ write_file(
     visibility = ["//visibility:private"],
 )
 
-# The firmware-native ACK r53 common tree is upstream Android Common Kernel
-# source and does not produce OnePlus' optional vmlinux_oki artifact.  The
-# surrounding OnePlus Kleaf constants still advertise that output, so omit it
-# for this stock-source control build without changing any kernel input.
-_OOS1610500_R53_GKI_OUTS = [out for out in DEFAULT_GKI_OUTS if out != "vmlinux_oki"]
-
 common_kernel(
     name = "kernel_aarch64",
-    outs = _OOS1610500_R53_GKI_OUTS,
+    outs = DEFAULT_GKI_OUTS,
     abi_definition_stg = "gki/aarch64/abi.stg",
     additional_kmi_symbol_lists = [":aarch64_additional_kmi_symbol_lists"],
     arch = "arm64",
     build_gki_artifacts = True,
+    clang_autofdo_profile = ":gki/aarch64/afdo/kernel.afdo",
     ddk_headers_archive = ":kernel_aarch64_ddk_headers_archive",
     ddk_module_headers = [":all_headers_aarch64"],
     defconfig = "arch/arm64/configs/gki_defconfig",
@@ -324,7 +331,9 @@ common_kernel(
     kmi_symbol_list_strict_mode = False,
     make_goals = _GKI_AARCH64_MAKE_GOALS,
     makefile = ":Makefile",
-    module_implicit_outs = get_gki_modules_list("arm64") + get_kunit_modules_list("arm64"),
+    module_implicit_outs = get_gki_modules_list("arm64") + get_kunit_modules_list("arm64") + [
+        "fs/xfs/xfs.ko",
+    ],
     pre_defconfig_fragments = ["arch/arm64/configs/tv_gki.fragment"],
     protected_module_names_list = ":gki_aarch64_protected_module_names",
     system_dlkm_extra_archive_files = [":generate_gki_module_info_arm64"],
@@ -342,12 +351,11 @@ Consider building @//common:kernel_aarch64 with:
 )
 
 common_kernel(
-    name = "kernel_aarch64_autofdo",
+    name = "kernel_aarch64_noautofdo",
     outs = DEFAULT_GKI_OUTS,
     additional_kmi_symbol_lists = [":aarch64_additional_kmi_symbol_lists"],
     arch = "arm64",
     build_gki_artifacts = True,
-    clang_autofdo_profile = ":gki/aarch64/afdo/kernel.afdo",
     ddk_headers_archive = ":kernel_aarch64_ddk_headers_archive",
     ddk_module_headers = [":all_headers_aarch64"],
     defconfig = "arch/arm64/configs/gki_defconfig",
@@ -358,7 +366,7 @@ common_kernel(
     gki_boot_img_sizes = _GKI_AARCH64_BOOT_IMAGE_SIZES,
     gki_system_dlkm_modules = ":gki_system_dlkm_modules_arm64",
     kcflags = COMMON_KCFLAGS,
-    # We don't guarantee ABI stability for AutoFDO target
+    # We don't guarantee ABI stability for no AutoFDO target
     kmi_enforced = False,
     kmi_symbol_list = "gki/aarch64/symbols/base",
     kmi_symbol_list_strict_mode = True,
@@ -385,6 +393,9 @@ common_kernel(
     outs = X86_64_OUTS,
     arch = "x86_64",
     build_gki_artifacts = True,
+    # We use aarch64 here because it's readily available and improves performance.
+    # See b/500458317 for more on x86_64 collection efforts.
+    clang_autofdo_profile = ":gki/aarch64/afdo/kernel.afdo",
     ddk_module_headers = [":all_headers_x86_64"],
     defconfig = "arch/x86/configs/gki_defconfig",
     extra_dist = [
@@ -657,6 +668,57 @@ pkg_install(
     destdir = "out/kernel_x86_64_crashdump/dist",
 )
 
+kernel_build(
+    name = "wonder_aarch64",
+    outs = [],
+    base_kernel = ":kernel_aarch64",
+    collect_unstripped_modules = True,
+    kmi_symbol_list = "gki/aarch64/symbols/wonder",
+    make_goals = ["modules"],
+    makefile = ":Makefile",
+    module_outs = [
+        "net/mac80211/mac80211.ko",
+        "net/wireless/cfg80211.ko",
+    ],
+    pre_defconfig_fragments = ["arch/arm64/configs/wonder.fragment"],
+    strip_modules = True,
+)
+
+kernel_module_group(
+    name = "wonder_ddk_modules",
+    srcs = ["//common-modules/wonder"],
+)
+
+kernel_abi(
+    name = "wonder_aarch64_abi",
+    kernel_build = ":wonder_aarch64",
+    kernel_modules = [":wonder_ddk_modules"],
+)
+
+kernel_modules_install(
+    name = "wonder_aarch64_modules_install",
+    kernel_build = ":wonder_aarch64",
+    kernel_modules = [":wonder_ddk_modules"],
+)
+
+pkg_files(
+    name = "wonder_aarch64_dist_files",
+    srcs = [
+        ":kernel_aarch64",
+        ":kernel_aarch64_additional_artifacts",
+        ":wonder_aarch64",
+        ":wonder_aarch64_modules_install",
+    ],
+    strip_prefix = strip_prefix.files_only(),
+    visibility = ["//visibility:private"],
+)
+
+pkg_install(
+    name = "wonder_aarch64_dist",
+    srcs = [":wonder_aarch64_dist_files"],
+    destdir = "out/wonder_aarch64/dist",
+)
+
 _DB845C_MODULE_OUTS = [
     # keep sorted
     "crypto/michael_mic.ko",
@@ -838,7 +900,6 @@ _DB845C_MODULE_OUTS = [
     "drivers/usb/host/ohci-hcd.ko",
     "drivers/usb/host/ohci-pci.ko",
     "drivers/usb/host/ohci-platform.ko",
-    "drivers/usb/host/xhci-pci-renesas.ko",
     "drivers/usb/typec/mux/fsa4480.ko",
     "drivers/usb/typec/mux/nb7vpq904m.ko",
     "drivers/usb/typec/mux/wcd939x-usbss.ko",
@@ -1622,13 +1683,6 @@ alias(
 )
 
 ddk_headers(
-    name = "gpiolib_internal_headers",
-    hdrs = ["drivers/gpio/gpiolib.h"],
-    linux_includes = ["drivers/gpio"],
-    visibility = ["//visibility:public"],
-)
-
-ddk_headers(
     name = "all_headers_aarch64",
     hdrs = [":all_headers_allowlist_aarch64"] + select({
         "//build/kernel/kleaf:allow_ddk_unsafe_headers_set": [":all_headers_unsafe"],
@@ -1673,11 +1727,17 @@ ddk_headers(
     hdrs = [
         "arch/arm64/kvm/hyp/include/module/nvhe/define_events.h",
         "arch/arm64/kvm/hyp/include/module/nvhe/trace.h",
+        "arch/arm64/kvm/hyp/include/nvhe/alloc_mgt.h",
+        "arch/arm64/kvm/hyp/include/nvhe/iommu.h",
+        "arch/arm64/kvm/hyp/include/nvhe/refcount.h",
+        "arch/arm64/kvm/hyp/include/nvhe/spinlock.h",
+        "arch/arm64/kvm/hyp/include/nvhe/trap_handler.h",
     ],
     includes = [
         # LINT.IfChange(pkvm_includes)
         "arch/arm64/kvm/hyp/include/module",
         # LINT.ThenChange(/arch/arm64/kvm/hyp/nvhe/Makefile.module:includes)
+        "arch/arm64/kvm/hyp/include",
     ],
     visibility = ["//visibility:private"],
 )
@@ -1716,7 +1776,6 @@ ddk_headers(
         "drivers/thermal/thermal_netlink.h",
         "drivers/thermal/thermal_thresholds.h",
         "drivers/ufs/core/ufshcd-crypto.h",
-        "drivers/ufs/core/ufshcd-priv.h",
         "drivers/ufs/host/ufshcd-pltfrm.h",
         "drivers/usb/dwc3/core.h",
         "sound/usb/card.h",
@@ -1831,7 +1890,6 @@ ddk_headers(
         "arch/arm64/kvm/hyp/include/nvhe/spinlock.h",
         "drivers/devfreq/governor.h",
         "drivers/pinctrl/core.h",
-        "drivers/ufs/core/ufshcd-priv.h",
         "drivers/ufs/host/ufshcd-pltfrm.h",
         "drivers/usb/dwc3/core.h",
         "drivers/usb/dwc3/debug.h",
@@ -1871,10 +1929,13 @@ ddk_headers(
 ddk_headers(
     name = "all_headers_allowlist_exynos",
     hdrs = [
+        "drivers/android/binder/rust_binder.h",
+        "drivers/android/binder/rust_binder_hooks.h",
         "drivers/android/binder_alloc.h",
         "drivers/android/binder_internal.h",
         "drivers/android/binder_trace.h",
         "drivers/android/dbitmap.h",
+        "kernel/futex/futex.h",
         "kernel/sched/cpudeadline.h",
         "kernel/sched/cpupri.h",
         "kernel/sched/ext.h",

@@ -488,9 +488,32 @@ u64 dm_start_time_ns_from_clone(struct bio *bio)
 }
 EXPORT_SYMBOL_GPL(dm_start_time_ns_from_clone);
 
-static inline bool bio_is_flush_with_data(struct bio *bio)
+static bool dm_table_has_one_device(struct dm_table *map)
 {
-	return ((bio->bi_opf & REQ_PREFLUSH) && bio->bi_iter.bi_size);
+	struct list_head *devices = dm_table_get_devices(map);
+
+	return !list_empty(devices) && devices->next == devices->prev;
+}
+
+static bool bio_should_be_requeued(struct mapped_device *md, struct bio *bio)
+{
+	struct dm_table *map;
+
+	guard(rcu)();
+
+	map = (struct dm_table *)rcu_dereference(md->map);
+
+	/*
+	 * .flush_bypasses_map is set on targets where it is safe to skip the
+	 * map function and submit bios directly to the underlying block
+	 * devices.
+	 *
+	 * If we have just one underlying device (i.e. there is one linear
+	 * target or multiple linear targets pointing to the same device), we
+	 * can send the flush with data directly to it.
+	 */
+	return bio->bi_opf & REQ_PREFLUSH && bio->bi_iter.bi_size &&
+		!(map->flush_bypasses_map && dm_table_has_one_device(map));
 }
 
 static inline unsigned int dm_io_sectors(struct dm_io *io, struct bio *bio)
@@ -499,7 +522,7 @@ static inline unsigned int dm_io_sectors(struct dm_io *io, struct bio *bio)
 	 * If REQ_PREFLUSH set, don't account payload, it will be
 	 * submitted (and accounted) after this flush completes.
 	 */
-	if (bio_is_flush_with_data(bio))
+	if (bio_should_be_requeued(io->md, bio))
 		return 0;
 	if (unlikely(dm_io_flagged(io, DM_IO_WAS_SPLIT)))
 		return io->sectors;
@@ -737,16 +760,7 @@ static struct table_device *open_table_device(struct mapped_device *md,
 		return ERR_PTR(-ENOMEM);
 	refcount_set(&td->count, 1);
 
-	/*
-	 * Open the backing device with kernel rather than caller
-	 * credentials. Otherwise the caller's credentials would be
-	 * pinned in bdev_file->f_cred until the table device is closed.
-	 * That would keep the caller's thread keyring alive long beyond the
-	 * lifetime of the caller, breaking userspace expectation (e.g.
-	 * cryptsetup(8) leaking the LUKS volume key).
-	 */
-	scoped_with_kernel_creds()
-		bdev_file = bdev_file_open_by_dev(dev, mode, _dm_claim_ptr, NULL);
+	bdev_file = bdev_file_open_by_dev(dev, mode, _dm_claim_ptr, NULL);
 	if (IS_ERR(bdev_file)) {
 		r = PTR_ERR(bdev_file);
 		goto out_free_td;
@@ -983,7 +997,7 @@ static void __dm_io_complete(struct dm_io *io, bool first_stage)
 	if (requeued)
 		return;
 
-	if (bio_is_flush_with_data(bio)) {
+	if (bio_should_be_requeued(md, bio)) {
 		/*
 		 * Preflush done for flush with data, reissue
 		 * without REQ_PREFLUSH.
@@ -1316,8 +1330,9 @@ out:
 /*
  * A target may call dm_accept_partial_bio only from the map routine.  It is
  * allowed for all bio types except REQ_PREFLUSH, REQ_OP_ZONE_* zone management
- * operations, REQ_OP_ZONE_APPEND (zone append writes) and any bio serviced by
- * __send_duplicate_bios().
+ * operations, zone append writes (native with REQ_OP_ZONE_APPEND or emulated
+ * with write BIOs flagged with BIO_EMULATES_ZONE_APPEND) and any bio serviced
+ * by __send_duplicate_bios().
  *
  * dm_accept_partial_bio informs the dm that the target only wants to process
  * additional n_sectors sectors of the bio and the rest of the data should be
@@ -1350,10 +1365,18 @@ void dm_accept_partial_bio(struct bio *bio, unsigned int n_sectors)
 	unsigned int bio_sectors = bio_sectors(bio);
 
 	BUG_ON(dm_tio_flagged(tio, DM_TIO_IS_DUPLICATE_BIO));
-	BUG_ON(op_is_zone_mgmt(bio_op(bio)));
-	BUG_ON(bio_op(bio) == REQ_OP_ZONE_APPEND);
 	BUG_ON(bio_sectors > *tio->len_ptr);
 	BUG_ON(n_sectors > bio_sectors);
+
+	if (static_branch_unlikely(&zoned_enabled) &&
+	    unlikely(bdev_is_zoned(bio->bi_bdev))) {
+		enum req_op op = bio_op(bio);
+
+		BUG_ON(op_is_zone_mgmt(op));
+		BUG_ON(op == REQ_OP_WRITE);
+		BUG_ON(op == REQ_OP_WRITE_ZEROES);
+		BUG_ON(op == REQ_OP_ZONE_APPEND);
+	}
 
 	*tio->len_ptr -= bio_sectors - n_sectors;
 	bio->bi_iter.bi_size = n_sectors << SECTOR_SHIFT;
@@ -1802,10 +1825,7 @@ static void init_clone_info(struct clone_info *ci, struct dm_io *io,
 static inline bool dm_zone_bio_needs_split(struct bio *bio)
 {
 	/*
-	 * For a mapped device that needs zone append emulation, we must
-	 * split any large BIO that straddles zone boundaries. Additionally,
-	 * split sequential zoned writes to prevent that splitting lower in the
-	 * stack causes bio reordering.
+	 * Special case the zone operations that cannot or should not be split.
 	 */
 	switch (bio_op(bio)) {
 	case REQ_OP_ZONE_APPEND:
@@ -1825,9 +1845,11 @@ static inline bool dm_zone_bio_needs_split(struct bio *bio)
 	 */
 	return bio_needs_zone_write_plugging(bio) || bio_straddles_zones(bio);
 }
+
 static inline bool dm_zone_plug_bio(struct mapped_device *md, struct bio *bio)
 {
-	return dm_emulate_zone_append(md) && blk_zone_plug_bio(bio, 0);
+	return bio_needs_zone_write_plugging(bio) &&
+		blk_zone_plug_bio(bio, 0, -1);
 }
 
 static blk_status_t __send_zone_reset_all_emulated(struct clone_info *ci,
@@ -1970,9 +1992,7 @@ static void dm_split_and_process_bio(struct mapped_device *md,
 
 	is_abnormal = is_abnormal_io(bio);
 	if (static_branch_unlikely(&zoned_enabled)) {
-		/* Special case REQ_OP_ZONE_RESET_ALL as it cannot be split. */
-		need_split = (bio_op(bio) != REQ_OP_ZONE_RESET_ALL) &&
-			(is_abnormal || dm_zone_bio_needs_split(bio));
+		need_split = is_abnormal || dm_zone_bio_needs_split(bio);
 	} else {
 		need_split = is_abnormal;
 	}
@@ -2010,12 +2030,15 @@ static void dm_split_and_process_bio(struct mapped_device *md,
 	}
 	init_clone_info(&ci, io, map, bio, is_abnormal);
 
-	if (bio->bi_opf & REQ_PREFLUSH) {
+	if (unlikely((bio->bi_opf & REQ_PREFLUSH) != 0)) {
+		if (map->flush_bypasses_map && dm_table_has_one_device(map))
+			goto send_preflush_with_data;
 		__send_empty_flush(&ci);
 		/* dm_io_complete submits any data associated with flush */
 		goto out;
 	}
 
+send_preflush_with_data:
 	if (static_branch_unlikely(&zoned_enabled) &&
 	    (bio_op(bio) == REQ_OP_ZONE_RESET_ALL)) {
 		error = __send_zone_reset_all(&ci);
@@ -2988,14 +3011,6 @@ static int __dm_suspend(struct mapped_device *md, struct dm_table *map,
 	 */
 	if (map)
 		r = dm_wait_for_completion(md, task_state);
-	else
-		/*
-		 * A concurrent table load may have started initializing an mq
-		 * queue without publishing a live table yet.  Do not inspect that
-		 * partially initialized queue, but retain the bio-based quiescence
-		 * that Android's mapless suspend path historically provided.
-		 */
-		r = dm_wait_for_bios_completion(md, task_state);
 	if (!r)
 		set_bit(dmf_suspended_flag, &md->flags);
 

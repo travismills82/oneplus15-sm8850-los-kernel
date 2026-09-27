@@ -981,6 +981,7 @@ struct fown_struct {
  *      and so were/are genuinely "ahead".  Start next readahead when
  *      the first of these pages is accessed.
  * @ra_pages: Maximum size of a readahead request, copied from the bdi.
+ * @order: Preferred folio order used for most recent readahead.
  * @mmap_miss: How many mmap accesses missed in the page cache.
  * @prev_pos: The last byte in the most recent read request.
  *
@@ -994,6 +995,16 @@ struct file_ra_state {
 	unsigned int ra_pages;
 	unsigned int mmap_miss;
 	loff_t prev_pos;
+};
+
+/* For GKI */
+#define DEFINE_RA_MMAP_MISS(ra)						\
+	struct file_ra_state_mmap_miss *ra_mmap_miss =			\
+		(struct file_ra_state_mmap_miss *)&(ra)->mmap_miss;
+
+struct file_ra_state_mmap_miss {
+	unsigned short order;
+	unsigned short mmap_miss;
 };
 
 /*
@@ -1202,15 +1213,15 @@ extern int send_sigurg(struct file *file);
 #define SB_NOUSER       BIT(31)
 
 /* These flags relate to encoding and casefolding */
-#define SB_ENC_STRICT_MODE_FL          (1 << 0)
-#define SB_ENC_NO_COMPAT_FALLBACK_FL   (1 << 1)
+#define SB_ENC_STRICT_MODE_FL		(1 << 0)
+#define SB_ENC_NO_COMPAT_FALLBACK_FL	(1 << 1)
 
 #define sb_has_strict_encoding(sb) \
 	(sb->s_encoding_flags & SB_ENC_STRICT_MODE_FL)
 
 #if IS_ENABLED(CONFIG_UNICODE)
 #define sb_no_casefold_compat_fallback(sb) \
-       (sb->s_encoding_flags & SB_ENC_NO_COMPAT_FALLBACK_FL)
+	(sb->s_encoding_flags & SB_ENC_NO_COMPAT_FALLBACK_FL)
 #else
 #define sb_no_casefold_compat_fallback(sb) (1)
 #endif

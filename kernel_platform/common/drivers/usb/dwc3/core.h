@@ -1420,7 +1420,9 @@ struct dwc3 {
 	int			num_ep_resized;
 	struct dentry		*debug_root;
 	u32			gsbuscfg0_reqinfo;
-	ANDROID_KABI_USE(1, u32 wakeup_pending_funcs);
+	u32			wakeup_pending_funcs;
+
+	ANDROID_KABI_RESERVE(1);
 	ANDROID_KABI_RESERVE(2);
 	ANDROID_KABI_RESERVE(3);
 	ANDROID_KABI_RESERVE(4);

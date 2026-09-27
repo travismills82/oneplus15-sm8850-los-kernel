@@ -36,6 +36,7 @@
 #include <linux/hrtimer_api.h>
 #include <linux/interrupt.h>
 #include <linux/irq_work.h>
+#include <linux/irqflags.h>
 #include <linux/jiffies.h>
 #include <linux/kref_api.h>
 #include <linux/kthread.h>
@@ -76,6 +77,8 @@
 #include <trace/events/power.h>
 #include <trace/events/sched.h>
 
+#include <trace/hooks/sched.h>
+
 #include "../workqueue_internal.h"
 
 struct rq;
@@ -95,7 +98,26 @@ struct cpuidle_state;
 #include "cpudeadline.h"
 
 #ifdef CONFIG_SCHED_DEBUG
+#ifdef CONFIG_PROVE_LOCKING
+# define SCHED_WARN_ON(x)				\
+	({						\
+		bool __ret = false;			\
+							\
+		if (unlikely(x)) {			\
+			unsigned long __flags;		\
+							\
+			local_irq_save(__flags);	\
+			printk_deferred_enter();	\
+			WARN_ONCE(true, #x);		\
+			printk_deferred_exit();		\
+			local_irq_restore(__flags);	\
+			__ret = true;			\
+		}					\
+		unlikely(__ret);			\
+	})
+#else
 # define SCHED_WARN_ON(x)      WARN_ONCE(x, #x)
+#endif
 #else
 # define SCHED_WARN_ON(x)      ({ (void)(x), 0; })
 #endif
@@ -689,7 +711,12 @@ struct balance_callback {
 struct cfs_rq {
 	struct load_weight	load;
 	unsigned int		nr_running;
-	unsigned int		h_nr_running;      /* SCHED_{NORMAL,BATCH,IDLE} */
+	ANDROID_KABI_REPLACE(unsigned int, h_nr_queued,
+		union {
+			unsigned int h_nr_queued;  /* SCHED_{NORMAL,BATCH,IDLE} */
+			unsigned int h_nr_running; /* ANDROID: Preserve KMI compat */
+		});
+	unsigned int		h_nr_runnable;     /* SCHED_{NORMAL,BATCH,IDLE} */
 	unsigned int		idle_nr_running;   /* SCHED_IDLE */
 	unsigned int		idle_h_nr_running; /* SCHED_IDLE */
 	unsigned int		h_nr_delayed;
@@ -945,7 +972,7 @@ static inline void se_update_runnable(struct sched_entity *se)
 	if (!entity_is_task(se)) {
 		struct cfs_rq *cfs_rq = se->my_q;
 
-		se->runnable_weight = cfs_rq->h_nr_running - cfs_rq->h_nr_delayed;
+		se->runnable_weight = cfs_rq->h_nr_queued - cfs_rq->h_nr_delayed;
 	}
 }
 
@@ -1205,7 +1232,7 @@ struct rq {
 	 * one CPU and if it got migrated afterwards it may decrease
 	 * it on another CPU. Always updated under the runqueue lock:
 	 */
-	unsigned int		nr_uninterruptible;
+	unsigned long 		nr_uninterruptible;
 
 #ifdef CONFIG_SCHED_PROXY_EXEC
 	struct task_struct __rcu	*donor;  /* Scheduling context */
@@ -2235,6 +2262,9 @@ static inline struct task_group *task_group(struct task_struct *p)
 
 static inline void __set_task_cpu(struct task_struct *p, unsigned int cpu)
 {
+	if (task_cpu(p) != cpu)
+		trace_android_rvh___set_task_cpu(p, cpu);
+
 	set_task_rq(p, cpu);
 #ifdef CONFIG_SMP
 	/*
@@ -3968,9 +3998,8 @@ void __move_queued_task_locked(struct rq *src_rq, struct rq *dst_rq, struct task
 static inline
 int __task_is_pushable(struct rq *rq, struct task_struct *p, int cpu)
 {
-	if (!task_on_cpu(rq, p) &&
-	    cpumask_test_cpu(cpu, &p->cpus_mask))
-		return 1;
+	if (!task_on_cpu(rq, p))
+		return cpumask_test_cpu(cpu, &p->cpus_mask) ? 1 : -1;
 
 	return 0;
 }

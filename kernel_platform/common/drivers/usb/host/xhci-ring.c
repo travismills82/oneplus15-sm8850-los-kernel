@@ -59,6 +59,8 @@
 #include "xhci.h"
 #include "xhci-trace.h"
 
+#include <trace/hooks/usb.h>
+
 static int queue_command(struct xhci_hcd *xhci, struct xhci_command *cmd,
 			 u32 field1, u32 field2,
 			 u32 field3, u32 field4, bool command_must_succeed);
@@ -2667,7 +2669,7 @@ static int handle_transferless_tx_event(struct xhci_hcd *xhci, struct xhci_virt_
 static bool xhci_spurious_success_tx_event(struct xhci_hcd *xhci,
 					   struct xhci_ring *ring)
 {
-	switch ((u32)ring->__kabi_reserved1) {
+	switch (ring->old_trb_comp_code) {
 	case COMP_SHORT_PACKET:
 		return xhci->quirks & XHCI_SPURIOUS_SUCCESS;
 	case COMP_USB_TRANSACTION_ERROR:
@@ -2735,8 +2737,7 @@ static int handle_tx_event(struct xhci_hcd *xhci,
 		if (EVENT_TRB_LEN(le32_to_cpu(event->transfer_len)) != 0) {
 			trb_comp_code = COMP_SHORT_PACKET;
 			xhci_dbg(xhci, "Successful completion on short TX for slot %u ep %u with last td comp code %d\n",
-				 slot_id, ep_index,
-				 (u32)ep_ring->__kabi_reserved1);
+				 slot_id, ep_index, ep_ring->old_trb_comp_code);
 		}
 		break;
 	case COMP_SHORT_PACKET:
@@ -2946,10 +2947,8 @@ static int handle_tx_event(struct xhci_hcd *xhci,
 			 */
 			if (xhci_spurious_success_tx_event(xhci, ep_ring)) {
 				xhci_dbg(xhci, "Spurious event dma %pad, comp_code %u after %u\n",
-					 &ep_trb_dma, trb_comp_code,
-					 (u32)ep_ring->__kabi_reserved1);
-				ep_ring->__kabi_reserved1 = 0;
-				ep_ring->last_td_was_short = false;
+					 &ep_trb_dma, trb_comp_code, ep_ring->old_trb_comp_code);
+				ep_ring->old_trb_comp_code = 0;
 				return 0;
 			}
 
@@ -2977,8 +2976,7 @@ static int handle_tx_event(struct xhci_hcd *xhci,
 	 */
 	} while (ep->skip);
 
-	ep_ring->__kabi_reserved1 = trb_comp_code;
-	ep_ring->last_td_was_short = trb_comp_code == COMP_SHORT_PACKET;
+	ep_ring->old_trb_comp_code = trb_comp_code;
 
 	/* Get out if a TD was queued at enqueue after the xrun occurred */
 	if (ring_xrun_event)
@@ -3030,7 +3028,7 @@ err_out:
  * This function handles one OS-owned event on the event ring. It may drop
  * xhci->lock between event processing (e.g. to pass up port status changes).
  */
-static int xhci_handle_event_trb(struct xhci_hcd *xhci, struct xhci_interrupter *ir,
+int xhci_handle_event_trb(struct xhci_hcd *xhci, struct xhci_interrupter *ir,
 				 union xhci_trb *event)
 {
 	u32 trb_type;
@@ -3074,6 +3072,7 @@ static int xhci_handle_event_trb(struct xhci_hcd *xhci, struct xhci_interrupter 
 
 	return 0;
 }
+EXPORT_SYMBOL_GPL(xhci_handle_event_trb);
 
 /*
  * Update Event Ring Dequeue Pointer:
@@ -3131,6 +3130,11 @@ static int xhci_handle_events(struct xhci_hcd *xhci, struct xhci_interrupter *ir
 	int event_loop = 0;
 	int err = 0;
 	u64 temp;
+	bool offload = false;
+
+	trace_android_vh_xhci_handle_offload(xhci, ir, &offload);
+	if (offload)
+		return 0;
 
 	xhci_clear_interrupt_pending(ir);
 

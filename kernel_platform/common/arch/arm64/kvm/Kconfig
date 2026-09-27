@@ -45,32 +45,8 @@ menuconfig KVM
 
 if KVM
 
-config NVHE_EL2_DEBUG
-	bool "Debug mode for non-VHE EL2 object"
-	depends on PKVM_DEBUG
-	help
-	  Say Y here to enable the debug mode for the non-VHE KVM EL2 object.
-	  Failure reports will BUG() in the hypervisor. This is intended for
-	  local EL2 hypervisor development.
-
-	  If unsure, say N.
-
-config PROTECTED_NVHE_STACKTRACE
-	bool "Protected KVM hypervisor stacktraces"
-	depends on NVHE_EL2_DEBUG
-	default n
-	help
-	  Say Y here to enable pKVM hypervisor stacktraces on hyp_panic()
-
-	  If using protected nVHE mode, but cannot afford the associated
-	  memory cost (less than 0.75 page per CPU) of pKVM stacktraces,
-	  say N.
-
-	  If unsure, or not using protected nVHE (pKVM), say N.
-
 config PTDUMP_STAGE2_DEBUGFS
 	bool "Present the stage-2 pagetables to debugfs"
-	depends on KVM
 	depends on DEBUG_KERNEL
 	depends on DEBUG_FS
 	depends on GENERIC_PTDUMP
@@ -84,27 +60,6 @@ config PTDUMP_STAGE2_DEBUGFS
 	  kernel.
 
 	  If in doubt, say N.
-
-config PROTECTED_NVHE_TESTING
-	bool "Protected KVM hypervisor testing infrastructure"
-	depends on KVM
-	default n
-	help
-	  Say Y here to enable pKVM hypervisor testing infrastructure.
-
-	  If unsure, say N.
-
-config PROTECTED_NVHE_FTRACE
-	bool "Protected KVM hypervisor function tracing"
-	depends on KVM
-	depends on TRACING
-	default n
-	help
-	  Say Y here to enable func and func_ret hypervisor tracing events.
-	  Those events are raised whenever the hypervisor branch to a
-	  function.
-
-	  If unsure, Say N.
 
 config PKVM_MODULE_PATH
 	string "Path to pKVM modules"

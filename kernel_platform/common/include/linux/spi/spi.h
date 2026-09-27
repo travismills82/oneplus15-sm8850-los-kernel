@@ -228,12 +228,11 @@ struct spi_device {
 	struct spi_statistics __percpu	*pcpu_statistics;
 
 	/* Bit mask of the chipselect(s) that the driver need to use from
-	 * the chipselect array. When the controller is capable to handle
+	 * the chipselect array.When the controller is capable to handle
 	 * multiple chip selects & memories are connected in parallel
 	 * then more than one bit need to be set in cs_index_mask.
 	 */
 	u32			cs_index_mask : SPI_CS_CNT_MAX;
-
 	ANDROID_KABI_RESERVE(1);
 	ANDROID_KABI_RESERVE(2);
 

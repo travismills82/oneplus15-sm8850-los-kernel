@@ -921,7 +921,6 @@ static void thermal_release(struct device *dev)
 		     sizeof("thermal_zone") - 1)) {
 		tz = to_thermal_zone(dev);
 		thermal_zone_destroy_device_groups(tz);
-		thermal_set_governor(tz, NULL);
 		ida_destroy(&tz->ida);
 		mutex_destroy(&tz->lock);
 		complete(&tz->removal);
@@ -1494,10 +1493,8 @@ thermal_zone_device_register_with_trips(const char *type,
 	/* sys I/F */
 	/* Add nodes that are always present via .groups */
 	result = thermal_zone_create_device_groups(tz);
-	if (result) {
-		thermal_set_governor(tz, NULL);
+	if (result)
 		goto remove_id;
-	}
 
 	/* A new thermal zone needs to be updated anyway. */
 	atomic_set(&tz->need_update, 1);
@@ -1649,6 +1646,8 @@ void thermal_zone_device_unregister(struct thermal_zone_device *tz)
 
 	cancel_delayed_work_sync(&tz->poll_queue);
 
+	thermal_set_governor(tz, NULL);
+
 	thermal_thresholds_exit(tz);
 	thermal_remove_hwmon_sysfs(tz);
 
@@ -1799,7 +1798,7 @@ static int thermal_pm_notify(struct notifier_block *nb,
 		mutex_unlock(&thermal_list_lock);
 		/*
 		 * Allow any leftover thermal work items already on the
-		 * workqueue to complete so they don't get in the way later.
+		 * worqueue to complete so they don't get in the way later.
 		 */
 		flush_workqueue(thermal_wq);
 		break;

@@ -537,72 +537,19 @@ void cpufreq_disable_fast_switch(struct cpufreq_policy *policy)
 }
 EXPORT_SYMBOL_GPL(cpufreq_disable_fast_switch);
 
-/*
- * Keep explicit limits private to the cpufreq core.  The exported unsorted
- * table helper retains its Android KMI three-argument interface.
- */
-int cpufreq_table_index_unsorted_limits(struct cpufreq_policy *policy,
-					unsigned int target_freq,
-					unsigned int min, unsigned int max,
-					unsigned int relation);
-
-static int cpufreq_frequency_table_target_limits(struct cpufreq_policy *policy,
-						 unsigned int target_freq,
-						 unsigned int min,
-						 unsigned int max,
-						 unsigned int relation)
-{
-	bool efficiencies = policy->efficiencies_available &&
-			    (relation & CPUFREQ_RELATION_E);
-	int idx;
-
-	/* The unsorted-table helper has no use for this flag. */
-	relation &= ~CPUFREQ_RELATION_E;
-
-	if (unlikely(policy->freq_table_sorted == CPUFREQ_TABLE_UNSORTED))
-		return cpufreq_table_index_unsorted_limits(policy, target_freq,
-							    min, max, relation);
-retry:
-	switch (relation) {
-	case CPUFREQ_RELATION_L:
-		idx = find_index_l(policy, target_freq, min, max, efficiencies);
-		break;
-	case CPUFREQ_RELATION_H:
-		idx = find_index_h(policy, target_freq, min, max, efficiencies);
-		break;
-	case CPUFREQ_RELATION_C:
-		idx = find_index_c(policy, target_freq, min, max, efficiencies);
-		break;
-	default:
-		WARN_ON_ONCE(1);
-		return 0;
-	}
-
-	/* Limit the selected table entry to this operation's stable snapshot. */
-	if (!cpufreq_is_in_limits_limits(policy, min, max, idx) && efficiencies) {
-		efficiencies = false;
-		goto retry;
-	}
-
-	return idx;
-}
-
 static unsigned int __resolve_freq(struct cpufreq_policy *policy,
-				   unsigned int target_freq,
-				   unsigned int min, unsigned int max,
-				   unsigned int relation)
+		unsigned int target_freq, unsigned int relation)
 {
 	unsigned int idx;
 	unsigned int old_target_freq = target_freq;
 
-	target_freq = clamp_val(target_freq, min, max);
+	target_freq = clamp_val(target_freq, policy->min, policy->max);
 	trace_android_vh_cpufreq_resolve_freq(policy, &target_freq, old_target_freq);
 
 	if (!policy->freq_table)
 		return target_freq;
 
-	idx = cpufreq_frequency_table_target_limits(policy, target_freq,
-						    min, max, relation);
+	idx = cpufreq_frequency_table_target(policy, target_freq, relation);
 	policy->cached_resolved_idx = idx;
 	policy->cached_target_freq = target_freq;
 	return policy->freq_table[idx].frequency;
@@ -622,21 +569,7 @@ static unsigned int __resolve_freq(struct cpufreq_policy *policy,
 unsigned int cpufreq_driver_resolve_freq(struct cpufreq_policy *policy,
 					 unsigned int target_freq)
 {
-	unsigned int min = READ_ONCE(policy->min);
-	unsigned int max = READ_ONCE(policy->max);
-
-	/*
-	 * If this function runs in parallel with cpufreq_set_policy(), it may
-	 * read policy->min before the update and policy->max after the update
-	 * or the other way around, so there is no ordering guarantee.
-	 *
-	 * Resolve this by always honoring the max (in case it comes from
-	 * thermal throttling or similar).
-	 */
-	if (unlikely(min > max))
-		min = max;
-
-	return __resolve_freq(policy, target_freq, min, max, CPUFREQ_RELATION_LE);
+	return __resolve_freq(policy, target_freq, CPUFREQ_RELATION_LE);
 }
 EXPORT_SYMBOL_GPL(cpufreq_driver_resolve_freq);
 
@@ -1555,6 +1488,7 @@ static int cpufreq_online(unsigned int cpu)
 		}
 
 		trace_android_vh_cpufreq_online(policy);
+		trace_android_rvh_cpufreq_create_policy(policy);
 
 		blocking_notifier_call_chain(&cpufreq_policy_notifier_list,
 				CPUFREQ_CREATE_POLICY, policy);
@@ -2411,8 +2345,7 @@ int __cpufreq_driver_target(struct cpufreq_policy *policy,
 	if (cpufreq_disabled())
 		return -ENODEV;
 
-	target_freq = __resolve_freq(policy, target_freq, policy->min,
-				     policy->max, relation);
+	target_freq = __resolve_freq(policy, target_freq, relation);
 
 	trace_android_vh_cpufreq_target(policy, &target_freq, old_target_freq);
 
@@ -2738,18 +2671,11 @@ static int cpufreq_set_policy(struct cpufreq_policy *policy,
 	 * Resolve policy min/max to available frequencies. It ensures
 	 * no frequency resolution will neither overshoot the requested maximum
 	 * nor undershoot the requested minimum.
-	 *
-	 * Avoid storing intermediate values in policy->max or policy->min and
-	 * compiler optimizations around them because they may be accessed
-	 * concurrently by cpufreq_driver_resolve_freq() during the update.
 	 */
-	WRITE_ONCE(policy->max, __resolve_freq(policy, new_data.max,
-					       new_data.min, new_data.max,
-					       CPUFREQ_RELATION_H));
-	new_data.min = __resolve_freq(policy, new_data.min, new_data.min,
-				      new_data.max, CPUFREQ_RELATION_L);
-	WRITE_ONCE(policy->min, new_data.min > policy->max ? policy->max : new_data.min);
-
+	policy->min = new_data.min;
+	policy->max = new_data.max;
+	policy->min = __resolve_freq(policy, policy->min, CPUFREQ_RELATION_L);
+	policy->max = __resolve_freq(policy, policy->max, CPUFREQ_RELATION_H);
 	trace_cpu_frequency_limits(policy);
 
 	cpufreq_update_pressure(policy);

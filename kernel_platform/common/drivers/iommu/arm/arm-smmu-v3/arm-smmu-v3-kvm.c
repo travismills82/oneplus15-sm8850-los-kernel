@@ -263,15 +263,13 @@ static int kvm_arm_smmu_domain_finalize(struct kvm_arm_smmu_domain *kvm_smmu_dom
 	if (kvm_smmu_domain->smmu)
 		return 0;
 
-	kvm_smmu_domain->smmu = smmu;
-
 	if (kvm_smmu_domain->domain.type == IOMMU_DOMAIN_IDENTITY) {
 		kvm_smmu_domain->id = KVM_IOMMU_DOMAIN_IDMAP_ID;
 		/*
 		 * Identity domains doesn't use the DMA API, so no need to
 		 * set the  domain aperture.
 		 */
-		return 0;
+		goto out;
 	}
 
 	/* Default to stage-1. */
@@ -329,7 +327,9 @@ static int kvm_arm_smmu_domain_finalize(struct kvm_arm_smmu_domain *kvm_smmu_dom
 		return ret;
 	}
 
-	return 0;
+out:
+	kvm_smmu_domain->smmu = smmu;
+	return ret;
 }
 
 static void kvm_arm_smmu_domain_free(struct iommu_domain *domain)
@@ -495,6 +495,9 @@ static int kvm_arm_smmu_map_pages(struct iommu_domain *domain,
 {
 	struct kvm_arm_smmu_domain *kvm_smmu_domain = to_kvm_smmu_domain(domain);
 
+	if (!kvm_smmu_domain->smmu)
+		return -ENODEV;
+
 	return kvm_iommu_map_pages(kvm_smmu_domain->id, iova, paddr, pgsize,
 				   pgcount, prot, gfp, total_mapped);
 }
@@ -506,6 +509,9 @@ static size_t kvm_arm_smmu_unmap_pages(struct iommu_domain *domain,
 {
 	struct kvm_arm_smmu_domain *kvm_smmu_domain = to_kvm_smmu_domain(domain);
 
+	if (!kvm_smmu_domain->smmu)
+		return 0;
+
 	return kvm_iommu_unmap_pages(kvm_smmu_domain->id, iova, pgsize, pgcount);
 }
 
@@ -513,6 +519,9 @@ static phys_addr_t kvm_arm_smmu_iova_to_phys(struct iommu_domain *domain,
 					     dma_addr_t iova)
 {
 	struct kvm_arm_smmu_domain *kvm_smmu_domain = to_kvm_smmu_domain(domain);
+
+	if (!kvm_smmu_domain->smmu)
+		return 0;
 
 	return kvm_iommu_iova_to_phys(kvm_smmu_domain->id, iova);
 }
@@ -543,8 +552,10 @@ static struct iommu_map_cookie_sg *kvm_arm_smmu_alloc_cookie_sg(unsigned long io
 	/* Rounds nents to allocate to page aligned size. */
 	map_sg->nents = kvm_iommu_sg_nents_round(nents);
 	map_sg->sg = kvm_iommu_sg_alloc(map_sg->nents, gfp);
-	if (!map_sg->sg)
+	if (!map_sg->sg) {
+		kfree(map_sg);
 		return NULL;
+	}
 	map_sg->iova = iova;
 	map_sg->prot = prot;
 	map_sg->gfp = gfp;
@@ -1255,8 +1266,8 @@ static int kvm_arm_smmu_v3_post_init(void)
 
 static int kvm_arm_smmu_v3_init_drv(void)
 {
-	int ret;
 	struct kvm_hyp_memcache atomic_mc;
+	int ret;
 
 	/*
 	 * Check whether any device owned by the host is behind an SMMU.
@@ -1291,6 +1302,8 @@ static int kvm_arm_smmu_v3_init_drv(void)
 	 */
 	kvm_hyp_arm_smmu_v3_smmus = kvm_arm_smmu_array;
 	kvm_hyp_arm_smmu_v3_count = kvm_arm_smmu_count;
+
+	init_hyp_memcache(&atomic_mc);
 
 	ret = smmu_alloc_atomic_mc(&atomic_mc);
 	if (ret)
@@ -1366,7 +1379,7 @@ static int kvm_arm_smmu_v3_device_id(struct device *dev, u32 idx,
 	return 0;
 }
 
-struct kvm_iommu_driver kvm_smmu_v3_ops = {
+static struct kvm_iommu_driver kvm_smmu_v3_ops = {
 	.init_driver = kvm_arm_smmu_v3_init_drv,
 	.remove_driver = kvm_arm_smmu_v3_remove_drv,
 	.get_iommu_id_by_of = kvm_arm_v3_id_by_of,

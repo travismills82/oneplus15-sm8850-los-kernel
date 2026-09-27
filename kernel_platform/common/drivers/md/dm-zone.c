@@ -57,27 +57,33 @@ int dm_blk_report_zones(struct gendisk *disk, sector_t sector,
 	struct mapped_device *md = disk->private_data;
 	struct dm_table *map;
 	struct dm_table *zone_revalidate_map = READ_ONCE(md->zone_revalidate_map);
-	int srcu_idx, ret;
+	int srcu_idx, ret = -EIO;
+	bool put_table = false;
 
-	if (!zone_revalidate_map) {
-		/* Regular user context */
+	if (!zone_revalidate_map || md->revalidate_map_task != current) {
+		/*
+		 * Regular user context or
+		 * Zone revalidation during __bind() is in progress, but this
+		 * call is from a different process
+		 */
 		map = dm_get_live_table(md, &srcu_idx);
-		if (!map)
-			return -EIO;
+		put_table = true;
 
 		if (dm_suspended_md(md)) {
 			ret = -EAGAIN;
-			goto put_live_table;
+			goto do_put_table;
 		}
 	} else {
 		/* Zone revalidation during __bind() */
 		map = zone_revalidate_map;
 	}
 
-	ret = dm_blk_do_report_zones(md, map, sector, nr_zones, cb, data);
+	if (map)
+		ret = dm_blk_do_report_zones(md, map, sector, nr_zones, cb,
+					     data);
 
-put_live_table:
-	if (!zone_revalidate_map)
+do_put_table:
+	if (put_table)
 		dm_put_live_table(md, srcu_idx);
 
 	return ret;
@@ -179,7 +185,9 @@ int dm_revalidate_zones(struct dm_table *t, struct request_queue *q)
 	 * our table for dm_blk_report_zones() to use directly.
 	 */
 	md->zone_revalidate_map = t;
+	md->revalidate_map_task = current;
 	ret = blk_revalidate_disk_zones(disk);
+	md->revalidate_map_task = NULL;
 	md->zone_revalidate_map = NULL;
 
 	if (ret) {

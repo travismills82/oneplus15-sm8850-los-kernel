@@ -116,12 +116,20 @@ static void tracing_mod_hyp_printk(u8 fmt_id, u64 a, u64 b, u64 c, u64 d)
 
 static int host_stage2_enable_lazy_pte(u64 pfn, u64 nr_pages)
 {
-	return __pkvm_host_lazy_pte(pfn, nr_pages, true);
+	/*
+	 * Deprecating the lazy PTE functionality as now the
+	 * host can unmap on FF-A lend.
+	 */
+	WARN_ON(1);
+
+	return -EPERM;
 }
 
 static int host_stage2_disable_lazy_pte(u64 pfn, u64 nr_pages)
 {
-	return __pkvm_host_lazy_pte(pfn, nr_pages, false);
+	WARN_ON(1);
+
+	return -EPERM;
 }
 
 static int __hyp_smp_processor_id(void)
@@ -265,10 +273,29 @@ u64 module_get_guest_trng_rng(u64 *entropy, int nbits)
 	return ops->trng_rnd64(entropy, nbits);
 }
 
+int module_map_module_page(u64 pfn, void *va, enum kvm_pgtable_prot prot,
+			   bool is_protected)
+{
+	return __pkvm_map_module_pages(pfn, va, 1, prot, is_protected);
+}
+
+int module_map_module_pages(u64 pfn, void *va, u64 nr_pages, enum kvm_pgtable_prot prot,
+			   bool is_protected)
+{
+	return __pkvm_map_module_pages(pfn, va, nr_pages, prot, is_protected);
+}
+
+int module_unmap_module_pages(u64 pfn, void *va, u64 nr_pages)
+{
+	return __pkvm_unmap_module_pages(pfn, va, nr_pages);
+}
+
 const struct pkvm_module_ops module_ops = {
 	.create_private_mapping = __pkvm_create_private_mapping,
 	.alloc_module_va = __pkvm_alloc_module_va,
-	.map_module_page = __pkvm_map_module_page,
+	.map_module_page = module_map_module_page,
+	.map_module_pages = module_map_module_pages,
+	.unmap_module_pages = module_unmap_module_pages,
 	.register_serial_driver = __pkvm_register_serial_driver,
 	.putc = hyp_putc,
 	.puts = hyp_puts,
@@ -329,7 +356,9 @@ const struct pkvm_module_ops module_ops = {
 	.iommu_reclaim_pages_atomic = kvm_iommu_reclaim_pages_atomic,
 	.hyp_smp_processor_id = __hyp_smp_processor_id,
 	.device_register_reset = pkvm_device_register_reset,
+	.device_register_power_lock = pkvm_device_register_power_lock,
 	.register_guest_trng_ops = __register_guest_trng_ops,
+	.request_hyp_alloc = kvm_iommu_request_hyp_alloc,
 };
 
 static void *pkvm_module_hyp_va(struct pkvm_el2_module *mod, void *kern_va)
@@ -401,7 +430,7 @@ int __pkvm_register_hcall(unsigned long hvn_hyp_va)
 	dyn_hcall_t hfn = (void *)hvn_hyp_va;
 	int reserved_id, ret;
 
-	assert_in_mod_range(hvn_hyp_va);
+	assert_in_mod_range(hvn_hyp_va, 8);
 
 	hyp_spin_lock(&dyn_hcall_lock);
 

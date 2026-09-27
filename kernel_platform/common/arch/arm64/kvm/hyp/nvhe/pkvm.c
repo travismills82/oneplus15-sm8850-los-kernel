@@ -238,6 +238,7 @@ static int pkvm_vcpu_init_traps(struct pkvm_hyp_vcpu *hyp_vcpu)
 	pvm_init_traps_hcr(vcpu);
 	pvm_init_traps_hcrx(vcpu);
 	pvm_init_traps_mdcr(vcpu);
+	kvm_calculate_fgu_traps(vcpu);
 
 	return 0;
 }
@@ -247,6 +248,12 @@ static int pkvm_vcpu_init_traps(struct pkvm_hyp_vcpu *hyp_vcpu)
  * Mainly for sanity checking and debugging.
  */
 #define HANDLE_OFFSET 0x1000
+
+/*
+ * Marks an invalid (deliberately leaked) entry in the VM table.
+ * This type of entry can never be recovered.
+ */
+#define LEAKED_ENTRY ((void *)0xdeadbeef)
 
 static unsigned int vm_handle_to_idx(pkvm_handle_t handle)
 {
@@ -317,11 +324,14 @@ static void unmap_donated_memory_noclear(void *va, size_t size)
 static struct pkvm_hyp_vm *get_vm_by_handle(pkvm_handle_t handle)
 {
 	unsigned int idx = vm_handle_to_idx(handle);
+	struct pkvm_hyp_vm *hyp_vm;
 
 	if (unlikely(idx >= KVM_MAX_PVMS))
 		return NULL;
 
-	return vm_table[idx];
+	hyp_vm = vm_table[idx];
+
+	return hyp_vm == LEAKED_ENTRY ? NULL : hyp_vm;
 }
 
 struct pkvm_hyp_vm *get_pkvm_hyp_vm(pkvm_handle_t handle)
@@ -396,6 +406,25 @@ int __pkvm_reclaim_dying_guest_ffa_resources(pkvm_handle_t handle)
 	return ret;
 }
 
+int __pkvm_notify_guest_vm_avail(pkvm_handle_t handle)
+{
+	struct pkvm_hyp_vm *hyp_vm;
+	int ret = 0;
+
+	hyp_read_lock(&vm_table_lock);
+	hyp_vm = get_vm_by_handle(handle);
+	if (!hyp_vm || !hyp_vm->kvm.arch.pkvm.ffa_support) {
+		ret = -EBUSY;
+		goto unlock;
+	}
+
+	ret = kvm_guest_notify_availability(vm_handle_to_ffa_handle(handle), &hyp_vm->ffa_buf,
+					    hyp_vm->is_dying);
+unlock:
+	hyp_read_unlock(&vm_table_lock);
+	return ret;
+}
+
 struct pkvm_hyp_vcpu *pkvm_load_hyp_vcpu(pkvm_handle_t handle,
 					 unsigned int vcpu_idx)
 {
@@ -467,9 +496,15 @@ static void pkvm_init_features_from_host(struct pkvm_hyp_vm *hyp_vm, const struc
 	struct kvm *kvm = &hyp_vm->kvm;
 	unsigned long host_arch_flags = READ_ONCE(host_kvm->arch.flags);
 
+	/* Preserve the vgic model so that GICv3 emulation works */
+	hyp_vm->kvm.arch.vgic.vgic_model = host_kvm->arch.vgic.vgic_model;
+
 	/* No restrictions for non-protected VMs. */
 	if (!kvm_vm_is_protected(kvm)) {
 		hyp_vm->kvm.arch.flags = host_arch_flags;
+		hyp_vm->kvm.arch.flags &= ~BIT_ULL(KVM_ARCH_FLAG_ID_REGS_INITIALIZED);
+
+		memcpy(kvm->arch.fgu, host_kvm->arch.fgu, sizeof(kvm->arch.fgu));
 
 		bitmap_copy(kvm->arch.vcpu_features,
 			    host_kvm->arch.vcpu_features,
@@ -541,7 +576,7 @@ static void unpin_host_sve_state(struct pkvm_hyp_vcpu *hyp_vcpu)
 	if (!vcpu_has_feature(&hyp_vcpu->vcpu, KVM_ARM_VCPU_SVE))
 		return;
 
-	sve_state = kern_hyp_va(hyp_vcpu->vcpu.arch.sve_state);
+	sve_state = hyp_vcpu->vcpu.arch.sve_state;
 	hyp_unpin_shared_mem(sve_state,
 			     sve_state + vcpu_sve_state_size(&hyp_vcpu->vcpu));
 }
@@ -553,6 +588,24 @@ static void teardown_sve_state(struct pkvm_hyp_vcpu *hyp_vcpu)
 
 	if (sve_state)
 		hyp_free_account(sve_state, hyp_vm->host_kvm);
+}
+
+static void teardown_hyp_vcpu_init(struct pkvm_hyp_vcpu *hyp_vcpu)
+{
+	struct pkvm_hyp_vm *hyp_vm = pkvm_hyp_vcpu_to_hyp_vm(hyp_vcpu);
+
+	unpin_host_vcpu(hyp_vcpu);
+
+	if (hyp_vm->pvmfw_entry_vcpu == hyp_vcpu)
+		hyp_vm->pvmfw_entry_vcpu = NULL;
+
+	if (!hyp_vcpu->vcpu.arch.sve_state)
+		return;
+
+	if (pkvm_hyp_vcpu_is_protected(hyp_vcpu))
+		teardown_sve_state(hyp_vcpu);
+	else
+		unpin_host_sve_state(hyp_vcpu);
 }
 
 static void unpin_host_vcpus(struct pkvm_hyp_vcpu *hyp_vcpus[],
@@ -645,51 +698,77 @@ static int pkvm_vcpu_init_sve(struct pkvm_hyp_vcpu *hyp_vcpu, struct kvm_vcpu *h
 	return 0;
 }
 
+static int vm_copy_id_regs(struct pkvm_hyp_vcpu *hyp_vcpu)
+{
+	struct pkvm_hyp_vm *hyp_vm = pkvm_hyp_vcpu_to_hyp_vm(hyp_vcpu);
+	const struct kvm *host_kvm = hyp_vm->host_kvm;
+	struct kvm *kvm = &hyp_vm->kvm;
+
+	if (!test_bit(KVM_ARCH_FLAG_ID_REGS_INITIALIZED, &host_kvm->arch.flags))
+		return -EINVAL;
+
+	if (test_and_set_bit(KVM_ARCH_FLAG_ID_REGS_INITIALIZED, &kvm->arch.flags))
+		return 0;
+
+	memcpy(kvm->arch.id_regs, host_kvm->arch.id_regs, sizeof(kvm->arch.id_regs));
+
+	return 0;
+}
+
+static int pkvm_vcpu_init_sysregs(struct pkvm_hyp_vcpu *hyp_vcpu)
+{
+	int ret = 0;
+
+	if (pkvm_hyp_vcpu_is_protected(hyp_vcpu)) {
+		kvm_init_pvm_id_regs(&hyp_vcpu->vcpu);
+		kvm_reset_pvm_sys_regs(&hyp_vcpu->vcpu);
+	} else {
+		ret = vm_copy_id_regs(hyp_vcpu);
+	}
+
+	return ret;
+}
+
 static int init_pkvm_hyp_vcpu(struct pkvm_hyp_vcpu *hyp_vcpu,
 			      struct pkvm_hyp_vm *hyp_vm,
 			      struct kvm_vcpu *host_vcpu)
 {
-	int ret = 0;
-	u32 mp_state;
+	struct kvm_hyp_req *hyp_reqs_va;
 	struct kvm_hyp_req *hyp_reqs;
+	u32 mp_state;
+	int ret = -EINVAL;
 
 	if (hyp_pin_shared_mem(host_vcpu, host_vcpu + 1))
 		return -EBUSY;
 
-	hyp_reqs = READ_ONCE(host_vcpu->arch.hyp_reqs);
-	if (!PAGE_ALIGNED(hyp_reqs)) {
-		hyp_unpin_shared_mem(host_vcpu, host_vcpu + 1);
-		return -EINVAL;
-	}
-
-	hyp_vcpu->vcpu.arch.hyp_reqs = kern_hyp_va(hyp_reqs);
-	if (hyp_pin_shared_mem(hyp_vcpu->vcpu.arch.hyp_reqs,
-			       hyp_vcpu->vcpu.arch.hyp_reqs + 1)) {
-		hyp_unpin_shared_mem(host_vcpu, host_vcpu + 1);
-		return -EBUSY;
-	}
+	/* Set before mp_state check so 'done:' cleanup can unpin host_vcpu. */
+	hyp_vcpu->host_vcpu = host_vcpu;
+	hyp_vcpu->vcpu.kvm = &hyp_vm->kvm;
 
 	mp_state = READ_ONCE(host_vcpu->arch.mp_state.mp_state);
-	if (mp_state != KVM_MP_STATE_RUNNABLE && mp_state != KVM_MP_STATE_STOPPED) {
-		ret = -EINVAL;
+	if (mp_state != KVM_MP_STATE_RUNNABLE && mp_state != KVM_MP_STATE_STOPPED)
 		goto done;
-	}
 
-	hyp_vcpu->host_vcpu = host_vcpu;
+	hyp_reqs = READ_ONCE(host_vcpu->arch.hyp_reqs);
+	if (!PAGE_ALIGNED(hyp_reqs))
+		goto done;
 
-	hyp_vcpu->vcpu.kvm = &hyp_vm->kvm;
+	hyp_reqs_va = kern_hyp_va(hyp_reqs);
+	if (hyp_pin_shared_mem(hyp_reqs_va, hyp_reqs_va + 1))
+		goto done;
+
 	hyp_vcpu->vcpu.vcpu_id = READ_ONCE(host_vcpu->vcpu_id);
 	hyp_vcpu->vcpu.vcpu_idx = READ_ONCE(host_vcpu->vcpu_idx);
 
 	hyp_vcpu->vcpu.arch.hw_mmu = &hyp_vm->kvm.arch.mmu;
 	hyp_vcpu->vcpu.arch.cflags = READ_ONCE(host_vcpu->arch.cflags);
 	hyp_vcpu->vcpu.arch.debug_ptr = &host_vcpu->arch.vcpu_debug_state;
+	hyp_vcpu->vcpu.arch.hyp_reqs = hyp_reqs_va;
 	hyp_vcpu->vcpu.arch.hyp_reqs->type = KVM_HYP_LAST_REQ;
 
-	if (pkvm_hyp_vcpu_is_protected(hyp_vcpu)) {
-		kvm_init_pvm_id_regs(&hyp_vcpu->vcpu);
-		kvm_reset_pvm_sys_regs(&hyp_vcpu->vcpu);
-	}
+	ret = pkvm_vcpu_init_sysregs(hyp_vcpu);
+	if (ret)
+		goto done;
 
 	ret = pkvm_vcpu_init_traps(hyp_vcpu);
 	if (ret)
@@ -704,7 +783,7 @@ static int init_pkvm_hyp_vcpu(struct pkvm_hyp_vcpu *hyp_vcpu,
 		goto done;
 done:
 	if (ret)
-		unpin_host_vcpu(hyp_vcpu);
+		teardown_hyp_vcpu_init(hyp_vcpu);
 	return ret;
 }
 
@@ -768,7 +847,17 @@ static void remove_vm_table_entry(pkvm_handle_t handle)
 
 	hyp_assert_write_lock_held(&vm_table_lock);
 	hyp_vm = vm_table[vm_handle_to_idx(handle)];
+
 	vm_table[vm_handle_to_idx(handle)] = NULL;
+
+	/*
+	 * If we didn't send the destruction message leak the vmid to
+	 * prevent others from using it.
+	 */
+	if (hyp_vm->kvm.arch.pkvm.ffa_support &&
+	    hyp_vm->ffa_buf.vm_avail_bitmap)
+		vm_table[vm_handle_to_idx(handle)] = LEAKED_ENTRY;
+
 	list_del(&hyp_vm->vm_list);
 }
 
@@ -881,6 +970,25 @@ unlock:
 	return transfer;
 }
 
+static int register_hyp_vcpu(struct pkvm_hyp_vm *hyp_vm,
+			      struct pkvm_hyp_vcpu *hyp_vcpu)
+{
+	unsigned int idx = hyp_vcpu->vcpu.vcpu_idx;
+
+	if (idx >= hyp_vm->kvm.created_vcpus)
+		return -EINVAL;
+
+	if (hyp_vm->vcpus[idx])
+		return -EINVAL;
+
+	/*
+	 * Ensure the hyp_vcpu is initialised before publishing it to
+	 * the vCPU-load path via 'hyp_vm->vcpus[]'.
+	 */
+	smp_store_release(&hyp_vm->vcpus[idx], hyp_vcpu);
+	return 0;
+}
+
 /*
  * Initialize the hypervisor copy of the protected vCPU state using the
  * memory donated by the host.
@@ -894,7 +1002,6 @@ int __pkvm_init_vcpu(pkvm_handle_t handle, struct kvm_vcpu *host_vcpu)
 {
 	struct pkvm_hyp_vcpu *hyp_vcpu;
 	struct pkvm_hyp_vm *hyp_vm;
-	unsigned int idx;
 	int ret;
 
 	hyp_read_lock(&vm_table_lock);
@@ -916,23 +1023,9 @@ int __pkvm_init_vcpu(pkvm_handle_t handle, struct kvm_vcpu *host_vcpu)
 	if (ret)
 		goto unlock_vcpus;
 
-	idx = hyp_vcpu->vcpu.vcpu_idx;
-	if (idx >= hyp_vm->kvm.created_vcpus) {
-		ret = -EINVAL;
-		goto unlock_vcpus;
-	}
-
-	if (hyp_vm->vcpus[idx]) {
-		ret = -EINVAL;
-		goto unlock_vcpus;
-	}
-
-	/*
-	 * Ensure the hyp_vcpu is initialised before publishing it to
-	 * the vCPU-load path via 'hyp_vm->vcpus[]'.
-	 */
-	smp_store_release(&hyp_vm->vcpus[idx], hyp_vcpu);
-
+	ret = register_hyp_vcpu(hyp_vm, hyp_vcpu);
+	if (ret)
+		teardown_hyp_vcpu_init(hyp_vcpu);
 unlock_vcpus:
 	hyp_spin_unlock(&hyp_vm->vcpus_lock);
 
@@ -1065,14 +1158,18 @@ int pkvm_load_pvmfw_pages(struct pkvm_hyp_vm *vm, u64 ipa, phys_addr_t phys,
 			  u64 size)
 {
 	struct kvm_protected_vm *pkvm = &vm->kvm.arch.pkvm;
-	u64 npages, offset = ipa - pkvm->pvmfw_load_addr;
-	void *src = hyp_phys_to_virt(pvmfw_base) + offset;
+	void *src = hyp_phys_to_virt(pvmfw_base);
+	u64 npages, start, end;
 
-	if (offset >= pvmfw_size)
-		return -EINVAL;
+	/* intersection between [ipa, ipa + size) and pvmfw region */
+	start = max(ipa, pkvm->pvmfw_load_addr);
+	end = min(ipa + size, pkvm->pvmfw_load_addr + pvmfw_size);
+	size = end - start;
 
-	size = min(size, pvmfw_size - offset);
-	if (!PAGE_ALIGNED(size) || !PAGE_ALIGNED(src))
+	src += start - pkvm->pvmfw_load_addr;
+	phys += start - ipa;
+
+	if (!PAGE_ALIGNED(size) || !PAGE_ALIGNED(src) || !PAGE_ALIGNED(phys))
 		return -EINVAL;
 
 	npages = size >> PAGE_SHIFT;
@@ -1438,11 +1535,10 @@ static bool pkvm_handle_psci(struct pkvm_hyp_vcpu *hyp_vcpu)
 	return pvm_psci_not_supported(hyp_vcpu);
 }
 
-int pkvm_handle_empty_memcache(struct pkvm_hyp_vcpu *hyp_vcpu, u64 *exit_code)
+static int pkvm_request_vcpu_memcache(struct pkvm_hyp_vcpu *hyp_vcpu, u64 *exit_code)
 {
-	struct kvm_hyp_req *req;
+	struct kvm_hyp_req *req = pkvm_hyp_req_reserve(hyp_vcpu, KVM_HYP_REQ_TYPE_MEM);
 
-	req = pkvm_hyp_req_reserve(hyp_vcpu, KVM_HYP_REQ_TYPE_MEM);
 	if (!req)
 		return -ENOMEM;
 
@@ -1450,7 +1546,63 @@ int pkvm_handle_empty_memcache(struct pkvm_hyp_vcpu *hyp_vcpu, u64 *exit_code)
 	req->mem.nr_pages = kvm_mmu_cache_min_pages(&hyp_vcpu->vcpu.kvm->arch.mmu);
 
 	write_sysreg_el2(read_sysreg_el2(SYS_ELR) - 4, SYS_ELR);
+	*exit_code = ARM_EXCEPTION_HYP_REQ;
 
+	return 0;
+}
+
+static int __pkvm_request_split(struct pkvm_hyp_vcpu *hyp_vcpu, u64 ipa)
+{
+	struct kvm_hyp_req *req = pkvm_hyp_req_reserve(hyp_vcpu, KVM_HYP_REQ_TYPE_SPLIT);
+
+	if (!req)
+		return -ENOMEM;
+
+	req->split.guest_ipa = ALIGN_DOWN(ipa, PMD_SIZE);
+	req->split.size = PMD_SIZE;
+
+	return 0;
+}
+
+static int pkvm_request_split(struct pkvm_hyp_vcpu *hyp_vcpu, u64 ipa, u64 nr_pages, u64 *exit_code)
+{
+	u64 end = ipa + (nr_pages * PAGE_SIZE);
+	int ret;
+
+	if (!IS_ALIGNED(ipa, PMD_SIZE)) {
+		ret = __pkvm_request_split(hyp_vcpu, ipa);
+		if (ret)
+			return ret;
+
+		/* This request already covers end */
+		if (ALIGN(ipa + 1, PMD_SIZE) >= end)
+			goto end;
+	}
+
+	if (!IS_ALIGNED(end, PMD_SIZE)) {
+		ret = __pkvm_request_split(hyp_vcpu, end);
+		if (ret)
+			return ret;
+	}
+
+end:
+	write_sysreg_el2(read_sysreg_el2(SYS_ELR) - 4, SYS_ELR);
+	*exit_code = ARM_EXCEPTION_HYP_REQ;
+
+	return 0;
+}
+
+static int pkvm_request_map(struct pkvm_hyp_vcpu *hyp_vcpu, u64 ipa, u64 nr_pages, u64 *exit_code)
+{
+	struct kvm_hyp_req *req = pkvm_hyp_req_reserve(hyp_vcpu, KVM_HYP_REQ_TYPE_MAP);
+
+	if (!req)
+		return -ENOMEM;
+
+	req->map.guest_ipa = ipa;
+	req->map.size = nr_pages << PAGE_SHIFT;
+
+	write_sysreg_el2(read_sysreg_el2(SYS_ELR) - 4, SYS_ELR);
 	*exit_code = ARM_EXCEPTION_HYP_REQ;
 
 	return 0;
@@ -1463,7 +1615,6 @@ static bool pkvm_memshare_call(struct pkvm_hyp_vcpu *hyp_vcpu, u64 *exit_code)
 	u64 ipa = smccc_get_arg1(vcpu);
 	u64 nr_pages = smccc_get_arg2(vcpu);
 	u64 arg3 = smccc_get_arg3(vcpu);
-	struct kvm_hyp_req *req;
 	u64 nr_shared;
 	int err;
 
@@ -1483,20 +1634,12 @@ static bool pkvm_memshare_call(struct pkvm_hyp_vcpu *hyp_vcpu, u64 *exit_code)
 
 		return true;
 	case -EFAULT:
-		req = pkvm_hyp_req_reserve(hyp_vcpu, KVM_HYP_REQ_TYPE_MAP);
-		if (!req)
+		if (pkvm_request_map(hyp_vcpu, ipa, nr_pages, exit_code))
 			goto out_guest_err;
 
-		req->map.guest_ipa = ipa;
-		req->map.size = nr_pages << PAGE_SHIFT;
-
-		/*
-		 * We're about to go back to the host... let's not waste time
-		 * and check for the memcache while at it.
-		 */
-		fallthrough;
-	case -ENOMEM:
-		if (pkvm_handle_empty_memcache(hyp_vcpu, exit_code))
+		goto out_host;
+	case -E2BIG:
+		if (pkvm_request_split(hyp_vcpu, ipa, nr_pages, exit_code))
 			goto out_guest_err;
 
 		goto out_host;
@@ -1558,7 +1701,7 @@ static bool pkvm_install_ioguard_page(struct pkvm_hyp_vcpu *hyp_vcpu,
 		goto out_guest_err;
 
 	ret = __pkvm_install_ioguard_page(hyp_vcpu, ipa, nr_pages, &nr_guarded);
-	if (ret == -ENOMEM && !pkvm_handle_empty_memcache(hyp_vcpu, exit_code))
+	if (ret == -ENOMEM && !pkvm_request_vcpu_memcache(hyp_vcpu, exit_code))
 		return false;
 
 out_guest_err:
@@ -1635,8 +1778,8 @@ static bool pkvm_memrelinquish_call(struct pkvm_hyp_vcpu *hyp_vcpu,
 		goto out_guest_err;
 
 	ret = __pkvm_guest_relinquish_to_host(hyp_vcpu, ipa, &pa);
-	if (ret == -ENOMEM) {
-		if (pkvm_handle_empty_memcache(hyp_vcpu, exit_code))
+	if (ret == -E2BIG) {
+		if (pkvm_request_split(hyp_vcpu, PAGE_ALIGN_DOWN(ipa), 1, exit_code))
 			goto out_guest_err;
 
 		return false;
@@ -1797,6 +1940,15 @@ bool kvm_handle_pvm_smc64(struct kvm_vcpu *vcpu, u64 *exit_code)
 }
 
 /*
+ * Set the func bit into one of the 4 32-bit arguments for ARM_SMCCC_VENDOR_HYP_KVM_FEATURES
+ */
+#define __smccc_kvm_func_to_feature_args(args, func)			\
+do {									\
+	BUILD_BUG_ON((func) / 32 > 3);					\
+	(args)[(func) / 32] |= BIT((func) % 32);			\
+} while (0)
+
+/*
  * Handler for protected VM HVC calls.
  *
  * Returns true if the hypervisor has handled the exit, and control should go
@@ -1822,17 +1974,19 @@ bool kvm_handle_pvm_hvc64(struct kvm_vcpu *vcpu, u64 *exit_code)
 		val[3] = ARM_SMCCC_VENDOR_HYP_UID_KVM_REG_3;
 		break;
 	case ARM_SMCCC_VENDOR_HYP_KVM_FEATURES_FUNC_ID:
-		val[0] = BIT(ARM_SMCCC_KVM_FUNC_FEATURES);
-		val[0] |= BIT(ARM_SMCCC_KVM_FUNC_HYP_MEMINFO);
-		val[0] |= BIT(ARM_SMCCC_KVM_FUNC_MEM_SHARE);
-		val[0] |= BIT(ARM_SMCCC_KVM_FUNC_MEM_UNSHARE);
-		val[0] |= BIT(ARM_SMCCC_KVM_FUNC_MMIO_GUARD_INFO);
-		val[0] |= BIT(ARM_SMCCC_KVM_FUNC_MMIO_GUARD_ENROLL);
-		val[0] |= BIT(ARM_SMCCC_KVM_FUNC_MMIO_GUARD_MAP);
-		val[0] |= BIT(ARM_SMCCC_KVM_FUNC_MMIO_GUARD_UNMAP);
-		val[0] |= BIT(ARM_SMCCC_KVM_FUNC_MMIO_RGUARD_MAP);
-		val[0] |= BIT(ARM_SMCCC_KVM_FUNC_MMIO_RGUARD_UNMAP);
-		val[0] |= BIT(ARM_SMCCC_KVM_FUNC_MEM_RELINQUISH);
+		val[0] = 0;
+		__smccc_kvm_func_to_feature_args(val, ARM_SMCCC_KVM_FUNC_FEATURES);
+		__smccc_kvm_func_to_feature_args(val, ARM_SMCCC_KVM_FUNC_HYP_MEMINFO);
+		__smccc_kvm_func_to_feature_args(val, ARM_SMCCC_KVM_FUNC_MEM_SHARE);
+		__smccc_kvm_func_to_feature_args(val, ARM_SMCCC_KVM_FUNC_MEM_UNSHARE);
+		__smccc_kvm_func_to_feature_args(val, ARM_SMCCC_KVM_FUNC_MMIO_GUARD_INFO);
+		__smccc_kvm_func_to_feature_args(val, ARM_SMCCC_KVM_FUNC_MMIO_GUARD_ENROLL);
+		__smccc_kvm_func_to_feature_args(val, ARM_SMCCC_KVM_FUNC_MMIO_GUARD_MAP);
+		__smccc_kvm_func_to_feature_args(val, ARM_SMCCC_KVM_FUNC_MMIO_GUARD_UNMAP);
+		__smccc_kvm_func_to_feature_args(val, ARM_SMCCC_KVM_FUNC_MMIO_RGUARD_MAP);
+		__smccc_kvm_func_to_feature_args(val, ARM_SMCCC_KVM_FUNC_MMIO_RGUARD_UNMAP);
+		__smccc_kvm_func_to_feature_args(val, ARM_SMCCC_KVM_FUNC_MEM_RELINQUISH);
+		__smccc_kvm_func_to_feature_args(val, ARM_SMCCC_KVM_FUNC_DEV_REQ_PWR);
 		break;
 	case ARM_SMCCC_VENDOR_HYP_KVM_MMIO_GUARD_ENROLL_FUNC_ID:
 		set_bit(KVM_ARCH_FLAG_MMIO_GUARD, &vcpu->kvm->arch.flags);
@@ -1866,6 +2020,8 @@ bool kvm_handle_pvm_hvc64(struct kvm_vcpu *vcpu, u64 *exit_code)
 		return pkvm_device_request_mmio(hyp_vcpu, exit_code);
 	case ARM_SMCCC_VENDOR_HYP_KVM_DEV_REQ_DMA_FUNC_ID:
 		return pkvm_device_request_dma(hyp_vcpu, exit_code);
+	case ARM_SMCCC_VENDOR_HYP_KVM_DEV_REQ_PWR_FUNC_ID:
+		return pkvm_device_request_power(hyp_vcpu, exit_code);
 	default:
 		if (is_ffa_call(fn))
 			return kvm_guest_ffa_handler(hyp_vcpu, exit_code);
@@ -1877,6 +2033,14 @@ bool kvm_handle_pvm_hvc64(struct kvm_vcpu *vcpu, u64 *exit_code)
 	return true;
 }
 
+u32 vm_handle_to_ffa_handle(pkvm_handle_t vm_handle)
+{
+	if (!vm_handle)
+		return HOST_FFA_ID;
+	else
+		return vm_handle_to_idx(vm_handle) + 1;
+}
+
 u32 hyp_vcpu_to_ffa_handle(struct pkvm_hyp_vcpu *hyp_vcpu)
 {
 	pkvm_handle_t vm_handle;
@@ -1885,5 +2049,5 @@ u32 hyp_vcpu_to_ffa_handle(struct pkvm_hyp_vcpu *hyp_vcpu)
 		return HOST_FFA_ID;
 
 	vm_handle = hyp_vcpu->vcpu.kvm->arch.pkvm.handle;
-	return vm_handle_to_idx(vm_handle) + 1;
+	return vm_handle_to_ffa_handle(vm_handle);
 }

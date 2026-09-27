@@ -14,6 +14,7 @@
 #include <linux/of.h>
 #include <linux/of_platform.h>
 #include <linux/platform_device.h>
+#include <linux/pm_runtime.h>
 #include <linux/proc_fs.h>
 #include <linux/slab.h>
 
@@ -345,9 +346,6 @@ void pci_bus_add_device(struct pci_dev *dev)
 	pci_proc_attach_device(dev);
 	pci_bridge_d3_update(dev);
 
-	/* Save config space for error recoverability */
-	pci_save_state(dev);
-
 	/*
 	 * If the PCI device is associated with a pwrctrl device with a
 	 * power supply, create a device link between the PCI device and
@@ -355,12 +353,26 @@ void pci_bus_add_device(struct pci_dev *dev)
 	 * before PCI client drivers.
 	 */
 	pdev = of_find_device_by_node(dn);
-	if (pdev && of_pci_supply_present(dn)) {
-		if (!device_link_add(&dev->dev, &pdev->dev,
-				     DL_FLAG_AUTOREMOVE_CONSUMER))
-			pci_err(dev, "failed to add device link to power control device %s\n",
-				pdev->name);
+	if (pdev) {
+		if (of_pci_supply_present(dn)) {
+			if (!device_link_add(&dev->dev, &pdev->dev,
+					     DL_FLAG_AUTOREMOVE_CONSUMER)) {
+				pci_err(dev, "failed to add device link to power control device %s\n",
+					pdev->name);
+			}
+		}
+		put_device(&pdev->dev);
 	}
+
+	/*
+	 * Enable runtime PM, which potentially allows the device to
+	 * suspend immediately, only after the PCI state has been
+	 * configured completely.
+	 */
+	pm_runtime_enable(&dev->dev);
+
+	/* Save config space for error recoverability */
+	pci_save_state(dev);
 
 	dev->match_driver = !dn || of_device_is_available(dn);
 	retval = device_attach(&dev->dev);

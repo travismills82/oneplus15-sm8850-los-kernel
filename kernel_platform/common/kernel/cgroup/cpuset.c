@@ -3081,6 +3081,8 @@ static void cpuset_attach_task(struct cpuset *cs, struct task_struct *task)
 
 	cpuset_change_task_nodemask(task, &cpuset_attach_nodemask_to);
 	cpuset1_update_task_spread_flags(cs, task);
+
+	trace_android_vh_cpuset_attach_task(&cs->css, task);
 }
 
 static void cpuset_attach(struct cgroup_taskset *tset)
@@ -3505,6 +3507,7 @@ static int cpuset_css_online(struct cgroup_subsys_state *css)
 out_unlock:
 	mutex_unlock(&cpuset_mutex);
 	cpus_read_unlock();
+	trace_android_vh_cpuset_css_online(css);
 	return 0;
 }
 
@@ -3673,7 +3676,7 @@ struct cgroup_subsys cpuset_cgrp_subsys = {
 	.css_alloc	= cpuset_css_alloc,
 	.css_online	= cpuset_css_online,
 	.css_offline	= cpuset_css_offline,
-	CGROUP_SUBSYS_CSS_KILLED(cpuset_css_killed),
+	.css_killed	= cpuset_css_killed,
 	.css_free	= cpuset_css_free,
 	.can_attach	= cpuset_can_attach,
 	.cancel_attach	= cpuset_cancel_attach,

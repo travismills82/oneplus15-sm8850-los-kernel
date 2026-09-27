@@ -2197,6 +2197,7 @@ static int shmem_swapin_folio(struct inode *inode, pgoff_t index,
 	/* Look it up and read it in.. */
 	folio = swap_cache_get_folio(swap, NULL, 0);
 	if (!folio) {
+
 		/* Or update major stats only when swapin succeeds?? */
 		if (fault_type) {
 			*fault_type |= VM_FAULT_MAJOR;
@@ -2631,7 +2632,7 @@ static vm_fault_t shmem_falloc_wait(struct vm_fault *vmf, struct inode *inode)
 	return ret;
 }
 
-vm_fault_t shmem_fault(struct vm_fault *vmf)
+static vm_fault_t shmem_fault(struct vm_fault *vmf)
 {
 	struct inode *inode = file_inode(vmf->vma->vm_file);
 	gfp_t gfp = mapping_gfp_mask(inode->i_mapping);
@@ -4947,9 +4948,16 @@ static const struct address_space_operations shmem_aops = {
 	.error_remove_folio = shmem_error_remove_folio,
 };
 
-#ifdef CONFIG_ASHMEM_RUST
+#ifdef CONFIG_ASHMEM
 extern long ashmem_memfd_ioctl(struct file *file, unsigned int cmd,
 			       unsigned long arg);
+
+static long shmem_ashmem_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
+{
+	if (!(SHMEM_I(file_inode(file))->flags & SHMEM_FL_MEMFD))
+		return -ENOTTY;
+	return ashmem_memfd_ioctl(file, cmd, arg);
+}
 #endif
 
 static const struct file_operations shmem_file_operations = {
@@ -4965,10 +4973,10 @@ static const struct file_operations shmem_file_operations = {
 	.splice_write	= iter_file_splice_write,
 	.fallocate	= shmem_fallocate,
 #endif
-#ifdef CONFIG_ASHMEM_RUST
-	.unlocked_ioctl	= ashmem_memfd_ioctl,
+#ifdef CONFIG_ASHMEM
+	.unlocked_ioctl	= shmem_ashmem_ioctl,
 #ifdef CONFIG_COMPAT
-	.compat_ioctl	= ashmem_memfd_ioctl,
+	.compat_ioctl	= shmem_ashmem_ioctl,
 #endif
 #endif
 };

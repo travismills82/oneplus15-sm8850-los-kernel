@@ -312,40 +312,6 @@ struct bpf_map {
 	s64 __percpu *elem_count;
 };
 
-/*
- * 6.12.y stores the program-array attach type in the existing tail padding
- * of owner.  Keep the KMI5-visible owner type byte-for-byte unchanged while
- * retaining the stable tail-call compatibility check.
- */
-#define BPF_MAP_OWNER_EXPECTED_ATTACH_TYPE_OFFSET			\
-	ALIGN(offsetof(typeof(((struct bpf_map *)0)->owner), xdp_has_frags) + \
-	      sizeof(bool), __alignof__(enum bpf_attach_type))
-
-static inline enum bpf_attach_type
-bpf_map_owner_expected_attach_type(const struct bpf_map *map)
-{
-	const enum bpf_attach_type *slot;
-
-	BUILD_BUG_ON(BPF_MAP_OWNER_EXPECTED_ATTACH_TYPE_OFFSET +
-		     sizeof(*slot) > sizeof(map->owner));
-	slot = (const void *)((const u8 *)&map->owner +
-			    BPF_MAP_OWNER_EXPECTED_ATTACH_TYPE_OFFSET);
-	return *slot;
-}
-
-static inline void
-bpf_map_set_owner_expected_attach_type(struct bpf_map *map,
-				       enum bpf_attach_type type)
-{
-	enum bpf_attach_type *slot;
-
-	BUILD_BUG_ON(BPF_MAP_OWNER_EXPECTED_ATTACH_TYPE_OFFSET +
-		     sizeof(*slot) > sizeof(map->owner));
-	slot = (void *)((u8 *)&map->owner +
-			BPF_MAP_OWNER_EXPECTED_ATTACH_TYPE_OFFSET);
-	*slot = type;
-}
-
 static inline const char *btf_field_type_name(enum btf_field_type type)
 {
 	switch (type) {
@@ -1544,6 +1510,7 @@ struct bpf_prog_aux {
 	bool exception_cb;
 	bool exception_boundary;
 	bool is_extended; /* true if extended by freplace program */
+	bool changes_pkt_data;
 	u64 prog_array_member_cnt; /* counts how many times as member of prog_array */
 	struct mutex ext_mutex; /* mutex for is_extended and prog_array_member_cnt */
 	struct bpf_arena *arena;
@@ -1612,9 +1579,6 @@ struct bpf_prog_aux {
 	};
 	ANDROID_KABI_RESERVE(1);
 };
-
-/* Store 6.12.25 changes_pkt_data state without changing the frozen KMI. */
-#define bpf_prog_aux_changes_pkt_data(aux) ((aux)->__kabi_reserved1)
 
 struct bpf_prog {
 	u16			pages;		/* Number of allocated pages */

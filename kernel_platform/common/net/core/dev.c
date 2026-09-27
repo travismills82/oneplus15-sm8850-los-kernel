@@ -584,12 +584,6 @@ static inline void netdev_set_addr_lockdep_class(struct net_device *dev)
 
 static inline struct list_head *ptype_head(const struct packet_type *pt)
 {
-	struct list_head vendor_pt = { .next  = NULL, };
-
-	trace_android_vh_ptype_head(pt, &vendor_pt);
-	if (vendor_pt.next)
-		return vendor_pt.next;
-
 	if (pt->type == htons(ETH_P_ALL))
 		return pt->dev ? &pt->dev->ptype_all : &net_hotdata.ptype_all;
 	else
@@ -3633,16 +3627,11 @@ static netdev_features_t gso_features_check(const struct sk_buff *skb,
 	 * IPv4 header has the potential to be fragmented.
 	 */
 	if (skb_shinfo(skb)->gso_type & SKB_GSO_TCPV4) {
-		const struct iphdr *iph;
-		struct iphdr _iph;
-		int nhoff = skb->encapsulation ?
-			    skb_inner_network_offset(skb) :
-			    skb_network_offset(skb);
+		struct iphdr *iph = skb->encapsulation ?
+				    inner_ip_hdr(skb) : ip_hdr(skb);
 
-		iph = skb_header_pointer(skb, nhoff, sizeof(_iph), &_iph);
-
-		if (!iph || !(iph->frag_off & htons(IP_DF)))
-			features &= ~netdev_mangleid_features(dev);
+		if (!(iph->frag_off & htons(IP_DF)))
+			features &= ~NETIF_F_TSO_MANGLEID;
 	}
 
 	/* NETIF_F_IPV6_CSUM does not support IPv6 extension headers,
@@ -10611,9 +10600,6 @@ int register_netdevice(struct net_device *dev)
 		dev->mpls_features |= NETIF_F_TSO_MANGLEID;
 	if (dev->hw_enc_features & NETIF_F_TSO)
 		dev->hw_enc_features |= NETIF_F_TSO_MANGLEID;
-
-	/* TSO_MANGLEID belongs in mangleid_features by definition */
-	netdev_add_mangleid_features(dev, NETIF_F_TSO_MANGLEID);
 
 	/* Make NETIF_F_HIGHDMA inheritable to VLAN devices.
 	 */

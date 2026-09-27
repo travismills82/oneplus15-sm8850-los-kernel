@@ -322,7 +322,11 @@ void mctrl_gpio_enable_ms(struct mctrl_gpios *gpios)
 }
 EXPORT_SYMBOL_GPL(mctrl_gpio_enable_ms);
 
-static void __mctrl_gpio_disable_ms(struct mctrl_gpios *gpios, bool sync)
+/**
+ * mctrl_gpio_disable_ms - disable irqs and handling of changes to the ms lines
+ * @gpios: gpios to disable
+ */
+void mctrl_gpio_disable_ms(struct mctrl_gpios *gpios)
 {
 	enum mctrl_gpio_idx i;
 
@@ -338,48 +342,10 @@ static void __mctrl_gpio_disable_ms(struct mctrl_gpios *gpios, bool sync)
 		if (!gpios->irq[i])
 			continue;
 
-		if (sync)
-			disable_irq(gpios->irq[i]);
-		else
-			disable_irq_nosync(gpios->irq[i]);
+		disable_irq(gpios->irq[i]);
 	}
 }
-
-/**
- * mctrl_gpio_disable_ms - disable irqs and handling of changes to the ms lines
- * @gpios: gpios to disable
- *
- * Keep the blocking interface exported for Android KMI compatibility. New
- * in-tree callers should select the explicitly synchronized or non-blocking
- * variant below.
- */
-void mctrl_gpio_disable_ms(struct mctrl_gpios *gpios)
-{
-	__mctrl_gpio_disable_ms(gpios, true);
-}
 EXPORT_SYMBOL_GPL(mctrl_gpio_disable_ms);
-
-/**
- * mctrl_gpio_disable_ms_sync - disable irqs and handling of changes to the ms
- * lines, and wait for any pending IRQ to be processed
- * @gpios: gpios to disable
- */
-void mctrl_gpio_disable_ms_sync(struct mctrl_gpios *gpios)
-{
-	__mctrl_gpio_disable_ms(gpios, true);
-}
-EXPORT_SYMBOL_GPL(mctrl_gpio_disable_ms_sync);
-
-/**
- * mctrl_gpio_disable_ms_no_sync - disable irqs and handling of changes to the
- * ms lines, and return immediately
- * @gpios: gpios to disable
- */
-void mctrl_gpio_disable_ms_no_sync(struct mctrl_gpios *gpios)
-{
-	__mctrl_gpio_disable_ms(gpios, false);
-}
-EXPORT_SYMBOL_GPL(mctrl_gpio_disable_ms_no_sync);
 
 void mctrl_gpio_enable_irq_wake(struct mctrl_gpios *gpios)
 {

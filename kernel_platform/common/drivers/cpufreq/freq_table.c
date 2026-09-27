@@ -116,10 +116,9 @@ int cpufreq_generic_frequency_table_verify(struct cpufreq_policy_data *policy)
 }
 EXPORT_SYMBOL_GPL(cpufreq_generic_frequency_table_verify);
 
-int cpufreq_table_index_unsorted_limits(struct cpufreq_policy *policy,
-					unsigned int target_freq,
-					unsigned int min, unsigned int max,
-					unsigned int relation)
+int cpufreq_table_index_unsorted(struct cpufreq_policy *policy,
+				 unsigned int target_freq,
+				 unsigned int relation)
 {
 	struct cpufreq_frequency_table optimal = {
 		.driver_data = ~0,
@@ -150,7 +149,7 @@ int cpufreq_table_index_unsorted_limits(struct cpufreq_policy *policy,
 	cpufreq_for_each_valid_entry_idx(pos, table, i) {
 		freq = pos->frequency;
 
-		if (freq < min || freq > max)
+		if ((freq < policy->min) || (freq > policy->max))
 			continue;
 		if (freq == target_freq) {
 			optimal.driver_data = i;
@@ -207,15 +206,6 @@ int cpufreq_table_index_unsorted_limits(struct cpufreq_policy *policy,
 	pr_debug("target index is %u, freq is:%u kHz\n", index,
 		 table[index].frequency);
 	return index;
-}
-
-int cpufreq_table_index_unsorted(struct cpufreq_policy *policy,
-				 unsigned int target_freq,
-				 unsigned int relation)
-{
-	return cpufreq_table_index_unsorted_limits(policy, target_freq,
-						 policy->min, policy->max,
-						 relation);
 }
 EXPORT_SYMBOL_GPL(cpufreq_table_index_unsorted);
 

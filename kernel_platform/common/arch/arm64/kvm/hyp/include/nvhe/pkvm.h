@@ -48,6 +48,8 @@ struct kvm_ffa_buffers {
 	void *rx;
 	u64 rx_ipa;
 	struct list_head xfer_list;
+	u64 vm_avail_bitmap;
+	u64 vm_creating_bitmap;
 };
 
 /*
@@ -122,6 +124,7 @@ int __pkvm_start_teardown_vm(pkvm_handle_t handle);
 int __pkvm_finalize_teardown_vm(pkvm_handle_t handle);
 int __pkvm_reclaim_dying_guest_page(pkvm_handle_t handle, u64 pfn, u64 gfn, u8 order);
 int __pkvm_reclaim_dying_guest_ffa_resources(pkvm_handle_t handle);
+int __pkvm_notify_guest_vm_avail(pkvm_handle_t handle);
 
 struct pkvm_hyp_vcpu *pkvm_load_hyp_vcpu(pkvm_handle_t handle,
 					 unsigned int vcpu_idx);
@@ -187,6 +190,8 @@ int pkvm_init_scmi_pd(struct kvm_power_domain *pd,
 
 bool pkvm_device_request_mmio(struct pkvm_hyp_vcpu *hyp_vcpu, u64 *exit_code);
 bool pkvm_device_request_dma(struct pkvm_hyp_vcpu *hyp_vcpu, u64 *exit_code);
+bool pkvm_device_request_power(struct pkvm_hyp_vcpu *hyp_vcpu, u64 *exit_code);
+void pkvm_device_request_power_pvm_entry(struct pkvm_hyp_vcpu *hyp_vcpu);
 void pkvm_devices_teardown(struct pkvm_hyp_vm *vm);
 int pkvm_devices_get_context(u64 iommu_id, u32 endpoint_id, struct pkvm_hyp_vm *vm);
 void pkvm_devices_put_context(u64 iommu_id, u32 endpoint_id);
@@ -216,7 +221,9 @@ int pkvm_device_reclaim_mmio(u64 pfn, u64 nr_pages);
 int pkvm_host_map_guest_mmio(struct pkvm_hyp_vcpu *hyp_vcpu, u64 pfn, u64 gfn);
 int pkvm_device_register_reset(u64 phys, void *cookie,
 			       int (*cb)(void *cookie, bool host_to_guest));
-int pkvm_handle_empty_memcache(struct pkvm_hyp_vcpu *hyp_vcpu, u64 *exit_code);
+int pkvm_device_register_power_lock(u64 phys, void *cookie,
+				       int (*cb)(void *cookie, bool lock));
 u32 hyp_vcpu_to_ffa_handle(struct pkvm_hyp_vcpu *hyp_vcpu);
+u32 vm_handle_to_ffa_handle(pkvm_handle_t vm_handle);
 
 #endif /* __ARM64_KVM_NVHE_PKVM_H__ */

@@ -126,19 +126,8 @@ struct usb_request {
 	int			status;
 	unsigned		actual;
 
-	ANDROID_KABI_RESERVE(1);
+	ANDROID_KABI_USE(1, struct usb_ep *ep);
 };
-
-static inline struct usb_ep *usb_request_ep(const struct usb_request *req)
-{
-	return (struct usb_ep *)(unsigned long)req->__kabi_reserved1;
-}
-
-static inline void usb_request_set_ep(struct usb_request *req,
-				      struct usb_ep *ep)
-{
-	req->__kabi_reserved1 = (unsigned long)ep;
-}
 
 /*-------------------------------------------------------------------------*/
 
@@ -325,7 +314,7 @@ static inline void free_usb_request(struct usb_request *req)
 		return;
 
 	kfree(req->buf);
-	usb_ep_free_request(usb_request_ep(req), req);
+	usb_ep_free_request(req->ep, req);
 }
 
 DEFINE_FREE(free_usb_request, struct usb_request *, free_usb_request(_T))

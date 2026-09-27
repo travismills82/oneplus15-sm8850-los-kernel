@@ -839,12 +839,12 @@ static inline int cpufreq_table_find_index_dl(struct cpufreq_policy *policy,
 	return best;
 }
 
-static inline int find_index_l(struct cpufreq_policy *policy,
-			       unsigned int target_freq,
-			       unsigned int min, unsigned int max,
-			       bool efficiencies)
+/* Works only on sorted freq-tables */
+static inline int cpufreq_table_find_index_l(struct cpufreq_policy *policy,
+					     unsigned int target_freq,
+					     bool efficiencies)
 {
-	target_freq = clamp_val(target_freq, min, max);
+	target_freq = clamp_val(target_freq, policy->min, policy->max);
 
 	if (policy->freq_table_sorted == CPUFREQ_TABLE_SORTED_ASCENDING)
 		return cpufreq_table_find_index_al(policy, target_freq,
@@ -852,14 +852,6 @@ static inline int find_index_l(struct cpufreq_policy *policy,
 	else
 		return cpufreq_table_find_index_dl(policy, target_freq,
 						   efficiencies);
-}
-
-/* Works only on sorted freq-tables */
-static inline int cpufreq_table_find_index_l(struct cpufreq_policy *policy,
-					     unsigned int target_freq,
-					     bool efficiencies)
-{
-	return find_index_l(policy, target_freq, policy->min, policy->max, efficiencies);
 }
 
 /* Find highest freq at or below target in a table in ascending order */
@@ -915,12 +907,12 @@ static inline int cpufreq_table_find_index_dh(struct cpufreq_policy *policy,
 	return best;
 }
 
-static inline int find_index_h(struct cpufreq_policy *policy,
-			       unsigned int target_freq,
-			       unsigned int min, unsigned int max,
-			       bool efficiencies)
+/* Works only on sorted freq-tables */
+static inline int cpufreq_table_find_index_h(struct cpufreq_policy *policy,
+					     unsigned int target_freq,
+					     bool efficiencies)
 {
-	target_freq = clamp_val(target_freq, min, max);
+	target_freq = clamp_val(target_freq, policy->min, policy->max);
 
 	if (policy->freq_table_sorted == CPUFREQ_TABLE_SORTED_ASCENDING)
 		return cpufreq_table_find_index_ah(policy, target_freq,
@@ -928,14 +920,6 @@ static inline int find_index_h(struct cpufreq_policy *policy,
 	else
 		return cpufreq_table_find_index_dh(policy, target_freq,
 						   efficiencies);
-}
-
-/* Works only on sorted freq-tables */
-static inline int cpufreq_table_find_index_h(struct cpufreq_policy *policy,
-					     unsigned int target_freq,
-					     bool efficiencies)
-{
-	return find_index_h(policy, target_freq, policy->min, policy->max, efficiencies);
 }
 
 /* Find closest freq to target in a table in ascending order */
@@ -1008,12 +992,12 @@ static inline int cpufreq_table_find_index_dc(struct cpufreq_policy *policy,
 	return best;
 }
 
-static inline int find_index_c(struct cpufreq_policy *policy,
-			       unsigned int target_freq,
-			       unsigned int min, unsigned int max,
-			       bool efficiencies)
+/* Works only on sorted freq-tables */
+static inline int cpufreq_table_find_index_c(struct cpufreq_policy *policy,
+					     unsigned int target_freq,
+					     bool efficiencies)
 {
-	target_freq = clamp_val(target_freq, min, max);
+	target_freq = clamp_val(target_freq, policy->min, policy->max);
 
 	if (policy->freq_table_sorted == CPUFREQ_TABLE_SORTED_ASCENDING)
 		return cpufreq_table_find_index_ac(policy, target_freq,
@@ -1023,17 +1007,7 @@ static inline int find_index_c(struct cpufreq_policy *policy,
 						   efficiencies);
 }
 
-/* Works only on sorted freq-tables */
-static inline int cpufreq_table_find_index_c(struct cpufreq_policy *policy,
-					     unsigned int target_freq,
-					     bool efficiencies)
-{
-	return find_index_c(policy, target_freq, policy->min, policy->max, efficiencies);
-}
-
-static inline bool cpufreq_is_in_limits_limits(struct cpufreq_policy *policy,
-					       unsigned int min,
-					       unsigned int max, int idx)
+static inline bool cpufreq_is_in_limits(struct cpufreq_policy *policy, int idx)
 {
 	unsigned int freq;
 
@@ -1042,13 +1016,7 @@ static inline bool cpufreq_is_in_limits_limits(struct cpufreq_policy *policy,
 
 	freq = policy->freq_table[idx].frequency;
 
-	return freq == clamp_val(freq, min, max);
-}
-
-static inline bool cpufreq_is_in_limits(struct cpufreq_policy *policy, int idx)
-{
-	return cpufreq_is_in_limits_limits(policy, policy->min, policy->max,
-					    idx);
+	return freq == clamp_val(freq, policy->min, policy->max);
 }
 
 static inline int cpufreq_frequency_table_target(struct cpufreq_policy *policy,
