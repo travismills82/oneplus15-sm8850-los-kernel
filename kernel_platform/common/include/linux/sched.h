@@ -1637,20 +1637,11 @@ struct task_struct {
 #endif
 	ANDROID_KABI_USE(1, struct task_dma_buf_info *dmabuf_info);
 #ifdef CONFIG_ARM64_ERRATUM_4193714
-	/*
-	 * Track CPUs that need SME DVMSync on completion of this batch.
-	 * Otherwise, the arm64 HW can do tlb shootdown, so we don't need to
-	 * record cpumask for sending IPI
-	 */
-	ANDROID_KABI_USE(2, cpumask_var_t cpumask_sme_dvmsync);
+	ANDROID_KABI_USE(2, u64 __donotuse_b448672457);
 #else
 	ANDROID_KABI_RESERVE(2);
 #endif
-	ANDROID_KABI_USE(3, struct {
-		/* Save user-dumpable when mm goes away */
-		unsigned	user_dumpable:1;
-		});
-
+	ANDROID_KABI_RESERVE(3);
 	ANDROID_KABI_RESERVE(4);
 	ANDROID_KABI_RESERVE(5);
 	ANDROID_KABI_RESERVE(6);
@@ -1687,6 +1678,23 @@ struct task_struct {
 	 * Do not put anything below here!
 	 */
 };
+
+/*
+ * Preserve the OxygenOS 16.0.10.601 task_struct type identity while keeping
+ * the 6.12.89 user-dumpable semantics. The state occupies the low bit of the
+ * same Android KABI reserve slot used by the upstream Android implementation.
+ */
+static inline bool task_user_dumpable(const struct task_struct *task)
+{
+	return task->__kabi_reserved3 & 1;
+}
+
+static inline void task_set_user_dumpable(struct task_struct *task,
+					 bool user_dumpable)
+{
+	task->__kabi_reserved3 = (task->__kabi_reserved3 & ~1ULL) |
+				 user_dumpable;
+}
 
 #ifdef CONFIG_SCHED_PROXY_EXEC
 DECLARE_STATIC_KEY_FALSE(__sched_proxy_exec);

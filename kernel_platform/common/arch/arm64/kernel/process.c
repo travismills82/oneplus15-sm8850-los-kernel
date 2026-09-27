@@ -297,20 +297,21 @@ void flush_thread(void)
 
 static void arch_dup_tlbbatch_mask(struct task_struct *dst)
 {
+	cpumask_var_t *maskp = task_sme_dvmsync_maskp(dst);
+
 	/*
 	 * Clear the inherited cpumask with memset() to cover both cases where
 	 * cpumask_var_t is a pointer or an array. It will be allocated lazily
 	 * in sme_dvmsync_add_pending() if CPUMASK_OFFSTACK=y.
 	 */
 	if (alternative_has_cap_unlikely(ARM64_WORKAROUND_4193714))
-		memset(&dst->cpumask_sme_dvmsync, 0,
-		       sizeof(dst->cpumask_sme_dvmsync));
+		memset(maskp, 0, sizeof(*maskp));
 }
 
 static void arch_release_tlbbatch_mask(struct task_struct *tsk)
 {
 	if (alternative_has_cap_unlikely(ARM64_WORKAROUND_4193714))
-		free_cpumask_var(tsk->cpumask_sme_dvmsync);
+		free_cpumask_var(*task_sme_dvmsync_maskp(tsk));
 }
 
 #else
