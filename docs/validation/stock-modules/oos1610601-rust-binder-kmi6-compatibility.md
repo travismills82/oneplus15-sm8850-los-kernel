@@ -9,7 +9,7 @@ or update `main`.
 
 - candidate branch: `experiment/oos1610601-linux-6.12.89`
 - candidate parent: `214e29a1f60571dedefd4f5615f43fc85a5e9285`
-- compatibility source HEAD: `6f714931532147830f5d74d2987913b90ef5ca5c`
+- physically tested runtime source HEAD: `5d9b99c7d1047fe6d392dc7ab5e6129d3981b5c8`
 - kernel line: Linux 6.12.89, Android 16, KMI generation 6
 - retained failure evidence: `/home/travis/Android/kernel-test-backups/oos1610601-ack-6.12.89-kmi6-20260927-195633/`
 
@@ -131,13 +131,33 @@ later repair for these exact source paths.
 - final `Module.symvers` SHA-256: `d3c9521bcac8caa2af557a859e38a68fcf8251bfad10dfb4e751351e4f348e81`
 - complete stock module oracle: PASS
 - stock Rust Binder contract: 225/225 accounted, PASS
-- enforced common ABI comparison: BLOCKED, additions only
+- normal Kleaf ABI reference update: exactly 11 reviewed function additions
+- existing ABI records modified or removed: 0
+- enforced common ABI comparison: PASS, empty diff
+- Canoe ABI dump: PASS
+- Canoe distribution: PASS
+- physically tested `boot.img` SHA-256:
+  `c704c189e5075e6104e53dfbbb8b5d64d289f9a9a04464f4c14d5a604ec6d895`
 
-The enforced ABI report contains exactly eleven function additions and no
-existing ABI modification or removal.  Updating `gki/aarch64/abi.stg` is not
-part of this change because the required explicit ABI-reference authorization
-has not been granted.  Canoe distribution packaging and physical testing must
-wait for that gate.
+The repository owner explicitly authorized the normal Kleaf ABI-reference
+update for exactly eleven reviewed function additions. Commit
+`5d9b99c7d1047fe6d392dc7ab5e6129d3981b5c8` adds only those records. Every
+old ABI record remained byte-identical and the post-update enforced report is
+empty.
+
+## Physical result
+
+The exact candidate was written only to active `boot_a`; the complete
+100,663,296-byte read-back matched the release image. Android reached
+`sys.boot_completed=1`, user0 reached `RUNNING_UNLOCKED`, and `/data` mounted
+as F2FS with `inlinecrypt`. The stock `rust_binder.ko` loaded normally; no
+missing symbol, version disagreement, bad vermagic, invalid-module, signing,
+or namespace failure was logged. TWRP, audio, camera, fingerprint, and NFC
+operation were subsequently confirmed by the device owner.
+
+The exact pre-test stock boot backup is retained under
+`/home/travis/Android/kernel-test-backups/oos1610601-ack-6.12.89-rust-compat-retest-20260928-171544/`.
+No supporting partition was modified.
 
 ## Commands
 
@@ -145,9 +165,13 @@ The principal validation targets were:
 
 ```text
 tools/bazel build //common:kernel_aarch64
-tools/bazel run //common:kernel_aarch64_abi_dist -- --destdir=../out/oos1610601-rust-oracle/abi-dist
+tools/bazel run //common:kernel_aarch64_abi_update -- --print_git_commands
+tools/bazel run //common:kernel_aarch64_abi_dist -- --destdir=../out/oos1610601-rust-oracle/abi-dist-postupdate
+tools/bazel build //soc-repo:canoe_perf_abi
+tools/bazel run //soc-repo:canoe_perf_dist
 python3 tools/audit-retained-stock-module-contract.py <exact .601 roots and load lists>
 ```
 
-No boot image was packaged or flashed, and no supporting partition was
-changed.
+The runtime compatibility repair and ABI update were committed separately.
+No stock module, DLKM, `vendor_boot`, DTBO, VBMeta, metadata, or userdata
+payload was changed.

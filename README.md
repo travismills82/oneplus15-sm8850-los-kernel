@@ -11,10 +11,46 @@ kernel, module, FBE/user0, and boot-container contract.
 
 | Firmware | Device physically tested | Kernel | Release tag |
 |---|---|---|---|
+| OxygenOS 16.0.10.601(EX01) | CPH2749 / OP611FL1 | `6.12.89-android16-6-o-g5d9b99c7d104-4k` | `oos16.0.10.601-linux-6.12.89-kmi6` |
 | OxygenOS 16.0.9.400(EX01) | CPH2749 / OP611FL1 | `6.12.52-android16-5-o-gfa9fe14314c7-4k` | `oos16.0.9.400-ack-6.12.52` |
 | OxygenOS 16.0.10.500(EX01) | CPH2747 | `6.12.37-android16-5-o-g57b52d3bb803-4k` | `oos16.0.10.500-ack-6.12.37` |
 
 Use only the release matching the installed firmware.
+
+## Linux 6.12.89 stable for OxygenOS 16.0.10.601
+
+| Field | Qualified value |
+|---|---|
+| Device family | OnePlus 15 / `infiniti` / `canoe` |
+| Physical device | CPH2749 / OP611FL1 |
+| Firmware | `CPH2749_16.0.10.601(EX01)` |
+| Kernel | `6.12.89-android16-6-o-g5d9b99c7d104-4k` |
+| KMI generation | Android 16 generation 6 |
+| Tested runtime source | `5d9b99c7d1047fe6d392dc7ab5e6129d3981b5c8` |
+| `boot.img` size | 100,663,296 bytes |
+| `boot.img` SHA-256 | `c704c189e5075e6104e53dfbbb8b5d64d289f9a9a04464f4c14d5a604ec6d895` |
+| TWRP ZIP SHA-256 | `3cc6509178b713eb397d0400b8c9d366050c9195019e244abf5bfe8452161de7` |
+
+This release is boot-only and retains the exact OxygenOS 16.0.10.601 stock
+module and vendor partitions. The repaired stock-module oracle checks every
+ELF undefined symbol as well as MODVERSIONS records. It passed 1,021 stock
+modules, 56,600 ELF imports, and 57,621 version records with zero missing
+providers, CRC mismatches, namespace failures, or active blockers. The stock
+`rust_binder.ko` loaded successfully with all 225 raw undefined ELF records
+accounted for.
+
+The exact boot image passed full-partition write/read-back, Android boot,
+existing encrypted user0 `RUNNING_UNLOCKED`, F2FS `/data` with `inlinecrypt`,
+WPA3 WLAN, LTE/RMNET initialization, Bluetooth, USB/ADB, and fatal
+kernel/module scans. TWRP, audio, camera, fingerprint, and NFC operation were
+confirmed on the physical device. Supporting DLKM, `vendor_boot`, DTBO,
+VBMeta, metadata, and userdata partitions were not written.
+
+See:
+
+- [6.12.89 physical qualification](docs/validation/firmware-16.0.10.601/oos1610601-linux-6.12.89-physical-validation-2026-09-28.md)
+- [Rust Binder KMI6 compatibility audit](docs/validation/stock-modules/oos1610601-rust-binder-kmi6-compatibility.md)
+- [6.12.89 release notes](docs/releases/oos16.0.10.601-linux-6.12.89-kmi6/release-notes.md)
 
 ## ACK 6.12.52 stable for OxygenOS 16.0.9.400
 
