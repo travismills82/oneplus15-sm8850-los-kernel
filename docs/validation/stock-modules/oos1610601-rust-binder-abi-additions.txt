@@ -1,0 +1,13 @@
+11 function symbol(s) added
+  'void kernel::fs::file::FileDescriptorReservation::fd_install(struct kernel::fs::file::FileDescriptorReservation, struct kernel::types::ARef<kernel::fs::file::File>)' {_RNvMs5_NtNtCsdfZWD8DztAw_6kernel2fs4fileNtB5_25FileDescriptorReservation10fd_install}
+  'variant core::result::Result<kernel::fs::file::FileDescriptorReservation, kernel::error::Error> kernel::fs::file::FileDescriptorReservation::get_unused_fd_flags(u32)' {_RNvMs5_NtNtCsdfZWD8DztAw_6kernel2fs4fileNtB5_25FileDescriptorReservation19get_unused_fd_flags}
+  'void kernel::sync::lock::mutex::{impl#0}::init(struct bindings::bindings_raw::mutex*, u8*, struct bindings::bindings_raw::lock_class_key*)' {_RNvXNtNtNtCsdfZWD8DztAw_6kernel4sync4lock5mutexNtB2_12MutexBackendNtB4_7Backend4init}
+  'void kernel::sync::lock::mutex::{impl#0}::lock(struct bindings::bindings_raw::mutex*)' {_RNvXNtNtNtCsdfZWD8DztAw_6kernel4sync4lock5mutexNtB2_12MutexBackendNtB4_7Backend4lock}
+  'void kernel::sync::lock::mutex::{impl#0}::unlock(struct bindings::bindings_raw::mutex*, ()*)' {_RNvXNtNtNtCsdfZWD8DztAw_6kernel4sync4lock5mutexNtB2_12MutexBackendNtB4_7Backend6unlock}
+  'variant core::option::Option<()> kernel::sync::lock::mutex::{impl#0}::try_lock(struct bindings::bindings_raw::mutex*)' {_RNvXNtNtNtCsdfZWD8DztAw_6kernel4sync4lock5mutexNtB2_12MutexBackendNtB4_7Backend8try_lock}
+  'void kernel::sync::lock::spinlock::{impl#0}::init(struct bindings::bindings_raw::spinlock*, u8*, struct bindings::bindings_raw::lock_class_key*)' {_RNvXNtNtNtCsdfZWD8DztAw_6kernel4sync4lock8spinlockNtB2_15SpinLockBackendNtB4_7Backend4init}
+  'void kernel::sync::lock::spinlock::{impl#0}::lock(struct bindings::bindings_raw::spinlock*)' {_RNvXNtNtNtCsdfZWD8DztAw_6kernel4sync4lock8spinlockNtB2_15SpinLockBackendNtB4_7Backend4lock}
+  'void kernel::sync::lock::spinlock::{impl#0}::unlock(struct bindings::bindings_raw::spinlock*, ()*)' {_RNvXNtNtNtCsdfZWD8DztAw_6kernel4sync4lock8spinlockNtB2_15SpinLockBackendNtB4_7Backend6unlock}
+  'variant core::option::Option<()> kernel::sync::lock::spinlock::{impl#0}::try_lock(struct bindings::bindings_raw::spinlock*)' {_RNvXNtNtNtCsdfZWD8DztAw_6kernel4sync4lock8spinlockNtB2_15SpinLockBackendNtB4_7Backend8try_lock}
+  'void kernel::fs::file::{impl#8}::drop(struct kernel::fs::file::FileDescriptorReservation*)' {_RNvXs6_NtNtCsdfZWD8DztAw_6kernel2fs4fileNtB5_25FileDescriptorReservationNtNtNtCs3o2tGsuHyou_4core3ops4drop4Drop4drop}
+

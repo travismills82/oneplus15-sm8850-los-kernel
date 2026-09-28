@@ -1,0 +1,19 @@
+RETAINED STOCK MODULE CONTRACT
+kernel_release=6.12.89-android16-6-o-g214e29a1f605-4k
+expected_vermagic=6.12.89-android16-6-o-g214e29a1f605-4k SMP preempt mod_unload modversions aarch64
+compatible=985
+dormant=36
+blocker=0
+undefined_elf_symbols=56600
+hard_required=56594
+weak=6
+versioned_imports=56600
+nonversioned_required=0
+special_version_records=1021
+resolved=56600
+missing=0
+crc_matches=57621
+crc_mismatches=0
+namespace_failures=0
+provider_ambiguities=3574
+result=PASS
