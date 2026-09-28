@@ -9609,6 +9609,11 @@ pointer_reference {
   pointee_type_id: 0x14287f03
 }
 pointer_reference {
+  id: 0x0f9ae536
+  kind: POINTER
+  pointee_type_id: 0x142b7247
+}
+pointer_reference {
   id: 0x0f9ba1d8
   kind: POINTER
   pointee_type_id: 0x142e61fd
@@ -16754,6 +16759,11 @@ pointer_reference {
   pointee_type_id: 0xbb6e8a40
 }
 pointer_reference {
+  id: 0x244ea251
+  kind: POINTER
+  pointee_type_id: 0xbb7a6fda
+}
+pointer_reference {
   id: 0x244f89ba
   kind: POINTER
   pointee_type_id: 0xbb7ec076
@@ -17594,6 +17604,11 @@ pointer_reference {
   pointee_type_id: 0xb1fb8f6c
 }
 pointer_reference {
+  id: 0x26f230de
+  kind: POINTER
+  pointee_type_id: 0xb18825e7
+}
+pointer_reference {
   id: 0x26f2b23d
   kind: POINTER
   pointee_type_id: 0xb18a2e6a
@@ -17617,6 +17632,11 @@ pointer_reference {
   id: 0x2707627c
   kind: POINTER
   pointee_type_id: 0xb65d6f6d
+}
+pointer_reference {
+  id: 0x270bc57b
+  kind: POINTER
+  pointee_type_id: 0xb66ff371
 }
 pointer_reference {
   id: 0x270c2906
@@ -49558,6 +49578,10 @@ member {
   type_id: 0x89d2d38c
 }
 member {
+  id: 0x16e52ed9
+  type_id: 0xd4bacb77
+}
+member {
   id: 0x20123939
   type_id: 0x0f6694f4
 }
@@ -49950,6 +49974,10 @@ member {
 member {
   id: 0x286e0992
   type_id: 0x2e965658
+}
+member {
+  id: 0x288078fc
+  type_id: 0x2d2f93e0
 }
 member {
   id: 0x288e28bc
@@ -52508,6 +52536,12 @@ member {
   type_id: 0x312fa971
 }
 member {
+  id: 0x97020204
+  name: "__0"
+  type_id: 0xbb7a6fda
+  offset: 8
+}
+member {
   id: 0x97086243
   name: "__0"
   type_id: 0xb111ced7
@@ -52548,6 +52582,16 @@ member {
   type_id: 0xeb537b7a
 }
 member {
+  id: 0x97551327
+  name: "__0"
+  type_id: 0xec60aa1a
+}
+member {
+  id: 0x975c42a5
+  name: "__0"
+  type_id: 0xe5312866
+}
+member {
   id: 0x9765fc81
   name: "__0"
   type_id: 0xdc8f0c03
@@ -52581,6 +52625,12 @@ member {
   id: 0x97806c31
   name: "__0"
   type_id: 0x391fbc9a
+}
+member {
+  id: 0x9780be93
+  name: "__0"
+  type_id: 0x39c025f6
+  offset: 32
 }
 member {
   id: 0x9781b3c0
@@ -53188,6 +53238,11 @@ member {
   type_id: 0x15e7f8fb
 }
 member {
+  id: 0x97ac98e5
+  name: "__0"
+  type_id: 0x15eb6888
+}
+member {
   id: 0x97ac9c33
   name: "__0"
   type_id: 0x15efbebf
@@ -53336,6 +53391,12 @@ member {
   id: 0x97ad4a7b
   name: "__0"
   type_id: 0x1439f621
+}
+member {
+  id: 0x97ad55c4
+  name: "__0"
+  type_id: 0x142b7247
+  offset: 32
 }
 member {
   id: 0x97ad5806
@@ -60344,6 +60405,12 @@ member {
   offset: 832
 }
 member {
+  id: 0xc3d27294
+  name: "_not_send"
+  type_id: 0x46d4dd43
+  offset: 32
+}
+member {
   id: 0x2c04d695
   name: "_nr_pages"
   type_id: 0xd4bacb77
@@ -60378,6 +60445,12 @@ member {
   name: "_overrun"
   type_id: 0x6720d32f
   offset: 32
+}
+member {
+  id: 0xe5f95904
+  name: "_p"
+  type_id: 0x86d10d04
+  offset: 64
 }
 member {
   id: 0xcb455660
@@ -60524,6 +60597,12 @@ member {
   name: "_pin"
   type_id: 0x779591fe
   offset: 41472
+}
+member {
+  id: 0xf00bafd0
+  name: "_pin"
+  type_id: 0x779591fe
+  offset: 1728
 }
 member {
   id: 0xc93fa5f0
@@ -114415,6 +114494,11 @@ member {
   type_id: 0x6720d32f
 }
 member {
+  id: 0x7fc6a2ad
+  name: "fd"
+  type_id: 0xd4bacb77
+}
+member {
   id: 0x7fc6af96
   name: "fd"
   type_id: 0xd4bacb77
@@ -139340,6 +139424,11 @@ member {
   name: "inmodeset"
   type_id: 0x4585663f
   offset: 864
+}
+member {
+  id: 0xc0000d56
+  name: "inner"
+  type_id: 0x03b658bc
 }
 member {
   id: 0x4192c5b2
@@ -191915,6 +192004,11 @@ member {
   offset: 48
 }
 member {
+  id: 0x69074aac
+  name: "pointer"
+  type_id: 0x26f230de
+}
+member {
   id: 0x690d41e0
   name: "pointer"
   type_id: 0x2cfe0bd5
@@ -199286,6 +199380,11 @@ member {
   name: "ptr"
   type_id: 0x86d95287
   offset: 768
+}
+member {
+  id: 0x46832fcb
+  name: "ptr"
+  type_id: 0x73e51ef6
 }
 member {
   id: 0x46b542cf
@@ -255512,6 +255611,11 @@ member {
   type_id: 0x20dcbf50
 }
 member {
+  id: 0xa02afd41
+  name: "value"
+  type_id: 0x22a1855b
+}
+member {
   id: 0xa0314730
   name: "value"
   type_id: 0x391f15ea
@@ -255547,6 +255651,11 @@ member {
   id: 0xa0732f23
   name: "value"
   type_id: 0x7b73e7a1
+}
+member {
+  id: 0xa07bb908
+  name: "value"
+  type_id: 0x73e5cca0
 }
 member {
   id: 0xa07ec19f
@@ -255592,6 +255701,11 @@ member {
   type_id: 0xc9082b19
 }
 member {
+  id: 0xa0c5c684
+  name: "value"
+  type_id: 0xcd9a40a1
+}
+member {
   id: 0xa0c72311
   name: "value"
   type_id: 0xcf7fd541
@@ -255633,6 +255747,11 @@ member {
   id: 0xa0ee727b
   name: "value"
   type_id: 0xe62ebf07
+}
+member {
+  id: 0xa0efced0
+  name: "value"
+  type_id: 0xe79214ac
 }
 member {
   id: 0xdf220102
@@ -267952,6 +268071,30 @@ variant_member {
   id: 0x317573c9
   name: "Some"
   type_id: 0x73843f20
+}
+variant_member {
+  id: 0xb165edb7
+  name: "Ok"
+  discriminant_value: 0
+  type_id: 0x69d7ade1
+}
+variant_member {
+  id: 0x0cfd72a8
+  name: "Err"
+  discriminant_value: 1
+  type_id: 0xb33bc204
+}
+variant_member {
+  id: 0x52b02b18
+  name: "None"
+  discriminant_value: 0
+  type_id: 0x9fc8c1fe
+}
+variant_member {
+  id: 0x312f202f
+  name: "Some"
+  discriminant_value: 1
+  type_id: 0x29dd89f4
 }
 struct_union {
   id: 0x001a6b83
@@ -294715,12 +294858,28 @@ struct_union {
   }
 }
 struct_union {
+  id: 0x22a1855b
+  kind: STRUCT
+  name: "core::cell::UnsafeCell<core::mem::maybe_uninit::MaybeUninit<bindings::bindings_raw::file>>"
+  definition {
+    bytesize: 216
+    member_id: 0xa0efced0
+  }
+}
+struct_union {
   id: 0x20dcbf50
   kind: STRUCT
   name: "core::cell::UnsafeCell<core::mem::maybe_uninit::MaybeUninit<bindings::bindings_raw::task_struct>>"
   definition {
     bytesize: 5184
     member_id: 0xa0eb32ea
+  }
+}
+struct_union {
+  id: 0x46d4dd43
+  kind: STRUCT
+  name: "core::marker::PhantomData<*mut ()>"
+  definition {
   }
 }
 struct_union {
@@ -294976,6 +295135,13 @@ struct_union {
   }
 }
 struct_union {
+  id: 0x86d10d04
+  kind: STRUCT
+  name: "core::marker::PhantomData<kernel::fs::file::File>"
+  definition {
+  }
+}
+struct_union {
   id: 0x670e999f
   kind: STRUCT
   name: "core::marker::PhantomData<u8>"
@@ -294997,12 +295163,31 @@ struct_union {
   }
 }
 struct_union {
+  id: 0xcd9a40a1
+  kind: STRUCT
+  name: "core::mem::manually_drop::ManuallyDrop<bindings::bindings_raw::file>"
+  definition {
+    bytesize: 216
+    member_id: 0xa07bb908
+  }
+}
+struct_union {
   id: 0x5fb9506f
   kind: STRUCT
   name: "core::mem::manually_drop::ManuallyDrop<bindings::bindings_raw::task_struct>"
   definition {
     bytesize: 5184
     member_id: 0xa0b957d3
+  }
+}
+struct_union {
+  id: 0xe79214ac
+  kind: UNION
+  name: "core::mem::maybe_uninit::MaybeUninit<bindings::bindings_raw::file>"
+  definition {
+    bytesize: 216
+    member_id: 0xebdb511a
+    member_id: 0xa0c5c684
   }
 }
 struct_union {
@@ -295013,6 +295198,41 @@ struct_union {
     bytesize: 5184
     member_id: 0xebdb511a
     member_id: 0xa057e594
+  }
+}
+struct_union {
+  id: 0xec60aa1a
+  kind: STRUCT
+  name: "core::num::nonzero::NonZero<i32>"
+  definition {
+    bytesize: 4
+    member_id: 0x97ac98e5
+  }
+}
+struct_union {
+  id: 0x15eb6888
+  kind: STRUCT
+  name: "core::num::nonzero::private::NonZeroI32Inner"
+  definition {
+    bytesize: 4
+    member_id: 0x975c42a5
+  }
+}
+struct_union {
+  id: 0x9fc8c1fe
+  kind: STRUCT
+  name: "core::option::Option<()>::None"
+  definition {
+    bytesize: 1
+  }
+}
+struct_union {
+  id: 0x29dd89f4
+  kind: STRUCT
+  name: "core::option::Option<()>::Some"
+  definition {
+    bytesize: 1
+    member_id: 0x97020204
   }
 }
 struct_union {
@@ -300470,6 +300690,33 @@ struct_union {
   definition {
     bytesize: 8
     member_id: 0x979f813f
+  }
+}
+struct_union {
+  id: 0x73e51ef6
+  kind: STRUCT
+  name: "core::ptr::non_null::NonNull<kernel::fs::file::File>"
+  definition {
+    bytesize: 8
+    member_id: 0x69074aac
+  }
+}
+struct_union {
+  id: 0xb33bc204
+  kind: STRUCT
+  name: "core::result::Result<kernel::fs::file::FileDescriptorReservation, kernel::error::Error>::Err"
+  definition {
+    bytesize: 8
+    member_id: 0x9780be93
+  }
+}
+struct_union {
+  id: 0x69d7ade1
+  kind: STRUCT
+  name: "core::result::Result<kernel::fs::file::FileDescriptorReservation, kernel::error::Error>::Ok"
+  definition {
+    bytesize: 8
+    member_id: 0x97ad55c4
   }
 }
 struct_union {
@@ -319889,6 +320136,34 @@ struct_union {
   }
 }
 struct_union {
+  id: 0x39c025f6
+  kind: STRUCT
+  name: "kernel::error::Error"
+  definition {
+    bytesize: 4
+    member_id: 0x97551327
+  }
+}
+struct_union {
+  id: 0xb18825e7
+  kind: STRUCT
+  name: "kernel::fs::file::File"
+  definition {
+    bytesize: 216
+    member_id: 0xc0000d56
+  }
+}
+struct_union {
+  id: 0x142b7247
+  kind: STRUCT
+  name: "kernel::fs::file::FileDescriptorReservation"
+  definition {
+    bytesize: 4
+    member_id: 0x7fc6a2ad
+    member_id: 0xc3d27294
+  }
+}
+struct_union {
   id: 0x852a40d7
   kind: STRUCT
   name: "kernel::task::Kuid"
@@ -319904,6 +320179,26 @@ struct_union {
   definition {
     bytesize: 5184
     member_id: 0x970e9385
+  }
+}
+struct_union {
+  id: 0x1fbdd188
+  kind: STRUCT
+  name: "kernel::types::ARef<kernel::fs::file::File>"
+  definition {
+    bytesize: 8
+    member_id: 0x46832fcb
+    member_id: 0xe5f95904
+  }
+}
+struct_union {
+  id: 0x03b658bc
+  kind: STRUCT
+  name: "kernel::types::Opaque<bindings::bindings_raw::file>"
+  definition {
+    bytesize: 216
+    member_id: 0xa02afd41
+    member_id: 0xf00bafd0
   }
 }
 struct_union {
@@ -378340,6 +378635,22 @@ variant {
   member_id: 0x524f0056
   member_id: 0x317573c9
 }
+variant {
+  id: 0xce81da82
+  name: "core::result::Result<kernel::fs::file::FileDescriptorReservation, kernel::error::Error>"
+  bytesize: 8
+  discriminant: 0x16e52ed9
+  member_id: 0xb165edb7
+  member_id: 0x0cfd72a8
+}
+variant {
+  id: 0xb786cfcd
+  name: "core::option::Option<()>"
+  bytesize: 1
+  discriminant: 0x288078fc
+  member_id: 0x52b02b18
+  member_id: 0x312f202f
+}
 function {
   id: 0x004cf563
   return_type_id: 0x48b5725f
@@ -381508,6 +381819,18 @@ function {
   parameter_id: 0x0ab9fa4c
 }
 function {
+  id: 0x12365098
+  return_type_id: 0x48b5725f
+  parameter_id: 0x0a82b23c
+  parameter_id: 0x01dbdd5f
+  parameter_id: 0x270bc57b
+}
+function {
+  id: 0x1238fd1c
+  return_type_id: 0x48b5725f
+  parameter_id: 0x0a82b23c
+}
+function {
   id: 0x1239d356
   return_type_id: 0x48b5725f
   parameter_id: 0x0a860b16
@@ -381846,6 +382169,12 @@ function {
   parameter_id: 0x92233392
   parameter_id: 0xf435685e
   parameter_id: 0x391f15ea
+}
+function {
+  id: 0x12a9c795
+  return_type_id: 0x48b5725f
+  parameter_id: 0x0a82b23c
+  parameter_id: 0x244ea251
 }
 function {
   id: 0x12a9e457
@@ -382622,6 +382951,11 @@ function {
   id: 0x137d3746
   return_type_id: 0x48b5725f
   parameter_id: 0x0f959b56
+}
+function {
+  id: 0x137ee8de
+  return_type_id: 0x48b5725f
+  parameter_id: 0x0f9ae536
 }
 function {
   id: 0x137f5862
@@ -384634,6 +384968,12 @@ function {
   parameter_id: 0x15c389f6
 }
 function {
+  id: 0x15ec7a44
+  return_type_id: 0x48b5725f
+  parameter_id: 0x142b7247
+  parameter_id: 0x1fbdd188
+}
+function {
   id: 0x15f067b5
   return_type_id: 0x48b5725f
   parameter_id: 0x145f7b00
@@ -385731,6 +386071,11 @@ function {
   return_type_id: 0x48b5725f
   parameter_id: 0x1eb602cd
   parameter_id: 0x0858434c
+}
+function {
+  id: 0x17152eca
+  return_type_id: 0xce81da82
+  parameter_id: 0xd4bacb77
 }
 function {
   id: 0x171a00e6
@@ -392282,6 +392627,12 @@ function {
   parameter_id: 0x3ead5ba3
 }
 function {
+  id: 0x1f34cd3e
+  return_type_id: 0x48b5725f
+  parameter_id: 0x3cf69892
+  parameter_id: 0x244ea251
+}
+function {
   id: 0x1f351290
   return_type_id: 0x48b5725f
   parameter_id: 0x3d896417
@@ -392819,6 +393170,11 @@ function {
   parameter_id: 0x351e2925
 }
 function {
+  id: 0x1fa5f7b7
+  return_type_id: 0x48b5725f
+  parameter_id: 0x3cf69892
+}
+function {
   id: 0x1fa773f3
   return_type_id: 0x48b5725f
   parameter_id: 0x3cfc8982
@@ -392848,6 +393204,13 @@ function {
   parameter_id: 0x4585663f
   parameter_id: 0x4585663f
   parameter_id: 0x4585663f
+}
+function {
+  id: 0x1fab5a33
+  return_type_id: 0x48b5725f
+  parameter_id: 0x3cf69892
+  parameter_id: 0x01dbdd5f
+  parameter_id: 0x270bc57b
 }
 function {
   id: 0x1fadab22
@@ -402687,6 +403050,11 @@ function {
   id: 0x9083980b
   return_type_id: 0x6720d32f
   parameter_id: 0x340dec91
+}
+function {
+  id: 0x9083bf41
+  return_type_id: 0xb786cfcd
+  parameter_id: 0x3cf69892
 }
 function {
   id: 0x908495c3
@@ -425723,6 +426091,11 @@ function {
   parameter_id: 0x6d7f5ff6
 }
 function {
+  id: 0x9d1eb5ea
+  return_type_id: 0xb786cfcd
+  parameter_id: 0x0a82b23c
+}
+function {
   id: 0x9d1f84da
   return_type_id: 0x6720d32f
   parameter_id: 0x0d7ce7cc
@@ -437753,6 +438126,105 @@ elf_symbol {
   crc: 0x4bf4187b
   type_id: 0x0a0be2b3
   full_name: "kernel::task::Task::euid"
+}
+elf_symbol {
+  id: 0x0e871441
+  name: "_RNvMs5_NtNtCsdfZWD8DztAw_6kernel2fs4fileNtB5_25FileDescriptorReservation10fd_install"
+  is_defined: true
+  symbol_type: FUNCTION
+  crc: 0x8ed6163c
+  type_id: 0x15ec7a44
+  full_name: "kernel::fs::file::FileDescriptorReservation::fd_install"
+}
+elf_symbol {
+  id: 0x58992a3b
+  name: "_RNvMs5_NtNtCsdfZWD8DztAw_6kernel2fs4fileNtB5_25FileDescriptorReservation19get_unused_fd_flags"
+  is_defined: true
+  symbol_type: FUNCTION
+  crc: 0x7f92a5db
+  type_id: 0x17152eca
+  full_name: "kernel::fs::file::FileDescriptorReservation::get_unused_fd_flags"
+}
+elf_symbol {
+  id: 0xc2f809ad
+  name: "_RNvXNtNtNtCsdfZWD8DztAw_6kernel4sync4lock5mutexNtB2_12MutexBackendNtB4_7Backend4init"
+  is_defined: true
+  symbol_type: FUNCTION
+  crc: 0xba648511
+  type_id: 0x12365098
+  full_name: "kernel::sync::lock::mutex::{impl#0}::init"
+}
+elf_symbol {
+  id: 0x00983777
+  name: "_RNvXNtNtNtCsdfZWD8DztAw_6kernel4sync4lock5mutexNtB2_12MutexBackendNtB4_7Backend4lock"
+  is_defined: true
+  symbol_type: FUNCTION
+  crc: 0x2d8ed52c
+  type_id: 0x1238fd1c
+  full_name: "kernel::sync::lock::mutex::{impl#0}::lock"
+}
+elf_symbol {
+  id: 0x4677fc91
+  name: "_RNvXNtNtNtCsdfZWD8DztAw_6kernel4sync4lock5mutexNtB2_12MutexBackendNtB4_7Backend6unlock"
+  is_defined: true
+  symbol_type: FUNCTION
+  crc: 0xf7629ee1
+  type_id: 0x12a9c795
+  full_name: "kernel::sync::lock::mutex::{impl#0}::unlock"
+}
+elf_symbol {
+  id: 0x324c6690
+  name: "_RNvXNtNtNtCsdfZWD8DztAw_6kernel4sync4lock5mutexNtB2_12MutexBackendNtB4_7Backend8try_lock"
+  is_defined: true
+  symbol_type: FUNCTION
+  crc: 0x3d69be18
+  type_id: 0x9d1eb5ea
+  full_name: "kernel::sync::lock::mutex::{impl#0}::try_lock"
+}
+elf_symbol {
+  id: 0xefe615ee
+  name: "_RNvXNtNtNtCsdfZWD8DztAw_6kernel4sync4lock8spinlockNtB2_15SpinLockBackendNtB4_7Backend4init"
+  is_defined: true
+  symbol_type: FUNCTION
+  crc: 0x80362030
+  type_id: 0x1fab5a33
+  full_name: "kernel::sync::lock::spinlock::{impl#0}::init"
+}
+elf_symbol {
+  id: 0xf47e9b0a
+  name: "_RNvXNtNtNtCsdfZWD8DztAw_6kernel4sync4lock8spinlockNtB2_15SpinLockBackendNtB4_7Backend4lock"
+  is_defined: true
+  symbol_type: FUNCTION
+  crc: 0xa763cf94
+  type_id: 0x1fa5f7b7
+  full_name: "kernel::sync::lock::spinlock::{impl#0}::lock"
+}
+elf_symbol {
+  id: 0x54ea3a76
+  name: "_RNvXNtNtNtCsdfZWD8DztAw_6kernel4sync4lock8spinlockNtB2_15SpinLockBackendNtB4_7Backend6unlock"
+  is_defined: true
+  symbol_type: FUNCTION
+  crc: 0x55288bf5
+  type_id: 0x1f34cd3e
+  full_name: "kernel::sync::lock::spinlock::{impl#0}::unlock"
+}
+elf_symbol {
+  id: 0x58a31c9c
+  name: "_RNvXNtNtNtCsdfZWD8DztAw_6kernel4sync4lock8spinlockNtB2_15SpinLockBackendNtB4_7Backend8try_lock"
+  is_defined: true
+  symbol_type: FUNCTION
+  crc: 0x729aa7fe
+  type_id: 0x9083bf41
+  full_name: "kernel::sync::lock::spinlock::{impl#0}::try_lock"
+}
+elf_symbol {
+  id: 0x83df73f2
+  name: "_RNvXs6_NtNtCsdfZWD8DztAw_6kernel2fs4fileNtB5_25FileDescriptorReservationNtNtNtCs3o2tGsuHyou_4core3ops4drop4Drop4drop"
+  is_defined: true
+  symbol_type: FUNCTION
+  crc: 0xe267dc8f
+  type_id: 0x137ee8de
+  full_name: "kernel::fs::file::{impl#8}::drop"
 }
 elf_symbol {
   id: 0xf56ca4c7
@@ -530714,6 +531186,17 @@ interface {
   symbol_id: 0xab09bd5e
   symbol_id: 0x1fc79573
   symbol_id: 0xe60ba4e2
+  symbol_id: 0x0e871441
+  symbol_id: 0x58992a3b
+  symbol_id: 0xc2f809ad
+  symbol_id: 0x00983777
+  symbol_id: 0x4677fc91
+  symbol_id: 0x324c6690
+  symbol_id: 0xefe615ee
+  symbol_id: 0xf47e9b0a
+  symbol_id: 0x54ea3a76
+  symbol_id: 0x58a31c9c
+  symbol_id: 0x83df73f2
   symbol_id: 0xf56ca4c7
   symbol_id: 0x59348d38
   symbol_id: 0x41de13f7
