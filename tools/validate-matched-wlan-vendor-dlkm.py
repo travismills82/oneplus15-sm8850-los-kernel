@@ -7,9 +7,12 @@ tree, then inspects the actual ELF ``__versions`` and ``__ksymtab``/``__kcrctab`
 tables.  The resulting reports answer three separate questions:
 
 * Does every source-built replacement preserve the stock module ABI contract?
-* Do all modules in the resulting vendor-DLKM tree resolve their versioned
-  imports against vmlinux, the candidate tree, or an explicitly retained
-  external module root?
+* Do all modules in the resulting vendor-DLKM tree resolve every hard ELF
+  undefined symbol against vmlinux, the candidate tree, or an explicitly
+  retained external module root, independently of whether the import has a
+  MODVERSIONS record?
+* Does every versioned import have the exact provider CRC expected by the
+  consumer?
 * Which remaining stock vendor-DLKM modules must be re-signed when a source
   replacement becomes a signed provider under CONFIG_MODULE_SIG_PROTECT?
 
@@ -41,10 +44,39 @@ MODULE_SIGNATURE_MAGIC = b"~Module signature appended~\n"
 class Section:
     index: int
     name: str
+    section_type: int
+    flags: int
+    address: int
     offset: int
     size: int
     link: int
+    info: int
+    alignment: int
     entsize: int
+
+
+@dataclass(frozen=True)
+class ElfSymbol:
+    index: int
+    name: str
+    binding: str
+    visibility: str
+    symbol_type: str
+    section_index: int
+    value: int
+    size: int
+
+    @property
+    def weak(self) -> bool:
+        return self.binding == "WEAK"
+
+
+@dataclass(frozen=True)
+class ExportRecord:
+    name: str
+    crc: int
+    export_class: str
+    namespace: str
 
 
 class ElfModule:
@@ -78,9 +110,14 @@ class ElfModule:
             Section(
                 index=index,
                 name=self.c_string(shstr_data, raw[0]),
+                section_type=raw[1],
+                flags=raw[2],
+                address=raw[3],
                 offset=raw[4],
                 size=raw[5],
                 link=raw[6],
+                info=raw[7],
+                alignment=raw[8],
                 entsize=raw[9],
             )
             for index, raw in enumerate(raw_headers)
@@ -117,7 +154,62 @@ class ElfModule:
             values[key].append(value)
         return values
 
-    def versions(self) -> dict[str, int]:
+    def symbols(self) -> list[ElfSymbol]:
+        symtab = self.section_or_none(".symtab")
+        if not symtab or symtab.entsize != 24:
+            raise ValueError(f"{self.path}: missing usable .symtab")
+        if symtab.link >= len(self.sections):
+            raise ValueError(f"{self.path}: invalid symbol-string-table reference")
+        strtab = self.sections[symtab.link]
+        strings = self.slice(strtab.offset, strtab.size)
+        binding_names = {0: "LOCAL", 1: "GLOBAL", 2: "WEAK", 10: "GNU_UNIQUE"}
+        type_names = {
+            0: "NOTYPE",
+            1: "OBJECT",
+            2: "FUNC",
+            3: "SECTION",
+            4: "FILE",
+            5: "COMMON",
+            6: "TLS",
+            10: "GNU_IFUNC",
+        }
+        visibility_names = {0: "DEFAULT", 1: "INTERNAL", 2: "HIDDEN", 3: "PROTECTED"}
+        result: list[ElfSymbol] = []
+        data = self.slice(symtab.offset, symtab.size)
+        if len(data) % symtab.entsize:
+            raise ValueError(f"{self.path}: malformed .symtab")
+        for index, offset in enumerate(range(0, len(data), symtab.entsize)):
+            name_offset, info, other, section_index, value, size = struct.unpack_from(
+                "<IBBHQQ", data, offset
+            )
+            result.append(
+                ElfSymbol(
+                    index=index,
+                    name=self.c_string(strings, name_offset),
+                    binding=binding_names.get(info >> 4, f"BIND_{info >> 4}"),
+                    visibility=visibility_names.get(other & 0x3, f"VIS_{other & 0x3}"),
+                    symbol_type=type_names.get(info & 0xF, f"TYPE_{info & 0xF}"),
+                    section_index=section_index,
+                    value=value,
+                    size=size,
+                )
+            )
+        return result
+
+    def undefined_symbols(self, include_null: bool = False) -> tuple[ElfSymbol, ...]:
+        """Return ELF SHN_UNDEF entries, including non-versioned imports.
+
+        Symbol-table entry zero is the mandatory anonymous STN_UNDEF record,
+        not a loader-resolved import.  Callers producing a raw ELF inventory
+        may request it explicitly with ``include_null=True``.
+        """
+
+        symbols = tuple(symbol for symbol in self.symbols() if symbol.section_index == 0)
+        if include_null:
+            return symbols
+        return tuple(symbol for symbol in symbols if symbol.name)
+
+    def legacy_versions(self) -> dict[str, int]:
         section = self.section_or_none("__versions")
         if not section:
             return {}
@@ -136,27 +228,90 @@ class ElfModule:
             versions[name] = crc
         return versions
 
-    def exported_crcs(self) -> dict[str, int]:
-        symtab = next((section for section in self.sections if section.name == ".symtab"), None)
-        if not symtab or symtab.entsize != 24:
-            raise ValueError(f"{self.path}: missing usable .symtab")
-        if symtab.link >= len(self.sections):
-            raise ValueError(f"{self.path}: invalid symbol-string-table reference")
-        strtab = self.sections[symtab.link]
-        strings = self.slice(strtab.offset, strtab.size)
-        symbols = []
-        data = self.slice(symtab.offset, symtab.size)
-        for offset in range(0, len(data), symtab.entsize):
-            name_offset, _info, _other, section_index, value, _size = struct.unpack_from(
-                "<IBBHQQ", data, offset
-            )
-            symbols.append((self.c_string(strings, name_offset), section_index, value))
+    def extended_versions(self) -> dict[str, int]:
+        crc_section = self.section_or_none("__version_ext_crcs")
+        name_section = self.section_or_none("__version_ext_names")
+        if bool(crc_section) != bool(name_section):
+            raise ValueError(f"{self.path}: incomplete extended MODVERSIONS tables")
+        if not crc_section or not name_section:
+            return {}
+        if crc_section.size % 4:
+            raise ValueError(f"{self.path}: malformed __version_ext_crcs section")
 
-        exports: dict[str, int] = {}
-        for section_name, crc_section_name in (
-            ("__ksymtab", "__kcrctab"),
-            ("__ksymtab_gpl", "__kcrctab_gpl"),
-            ("__ksymtab_gpl_future", "__kcrctab_gpl_future"),
+        crc_data = self.slice(crc_section.offset, crc_section.size)
+        name_data = self.slice(name_section.offset, name_section.size)
+        versions: dict[str, int] = {}
+        name_offset = 0
+        for crc_offset in range(0, len(crc_data), 4):
+            if name_offset >= len(name_data):
+                raise ValueError(f"{self.path}: more extended CRCs than names")
+            name_end = name_data.find(b"\0", name_offset)
+            if name_end < 0:
+                raise ValueError(f"{self.path}: unterminated extended version name")
+            name = name_data[name_offset:name_end].decode("ascii", "replace")
+            if not name:
+                raise ValueError(f"{self.path}: empty extended version name")
+            value = struct.unpack_from("<I", crc_data, crc_offset)[0]
+            if name in versions and versions[name] != value:
+                raise ValueError(f"{self.path}: conflicting extended CRC for {name}")
+            versions[name] = value
+            name_offset = name_end + 1
+        if any(name_data[name_offset:]):
+            raise ValueError(f"{self.path}: extra non-NUL data in extended version names")
+        return versions
+
+    def versions(self) -> dict[str, int]:
+        """Return the exact MODVERSIONS table selected by the module loader."""
+
+        legacy = self.legacy_versions()
+        extended = self.extended_versions()
+        if not extended:
+            return legacy
+        for name, value in legacy.items():
+            if extended.get(name) != value:
+                raise ValueError(
+                    f"{self.path}: legacy/extended MODVERSIONS disagree for {name}"
+                )
+        # kernel/module/version.c deliberately relies only on the extended
+        # tables when they are present.  They include both short and long
+        # symbol names, whereas __versions contains only short names.
+        return extended
+
+    def _relocations(self, target: Section) -> dict[int, tuple[ElfSymbol, int]]:
+        relocation = self.section_or_none(f".rela{target.name}")
+        if not relocation:
+            return {}
+        if relocation.section_type != 4 or relocation.entsize != 24:
+            raise ValueError(f"{self.path}: unusable relocation table for {target.name}")
+        if relocation.info != target.index:
+            raise ValueError(f"{self.path}: relocation target mismatch for {target.name}")
+        symbols = self.symbols()
+        records: dict[int, tuple[ElfSymbol, int]] = {}
+        data = self.slice(relocation.offset, relocation.size)
+        if len(data) % relocation.entsize:
+            raise ValueError(f"{self.path}: malformed relocation table for {target.name}")
+        for offset in range(0, len(data), relocation.entsize):
+            target_offset, info, addend = struct.unpack_from("<QQq", data, offset)
+            symbol_index = info >> 32
+            if symbol_index >= len(symbols):
+                raise ValueError(f"{self.path}: invalid relocation symbol index")
+            if target_offset in records:
+                raise ValueError(f"{self.path}: duplicate relocation at {target.name}+{target_offset}")
+            records[target_offset] = (symbols[symbol_index], addend)
+        return records
+
+    def exported_symbols(self) -> dict[str, ExportRecord]:
+        symbols = self.symbols()
+        exports: dict[str, ExportRecord] = {}
+        string_section = self.section_or_none("__ksymtab_strings")
+        export_strings = (
+            self.slice(string_section.offset, string_section.size) if string_section else b""
+        )
+
+        for section_name, crc_section_name, export_class in (
+            ("__ksymtab", "__kcrctab", "EXPORT_SYMBOL"),
+            ("__ksymtab_gpl", "__kcrctab_gpl", "EXPORT_SYMBOL_GPL"),
+            ("__ksymtab_gpl_future", "__kcrctab_gpl_future", "EXPORT_SYMBOL_GPL_FUTURE"),
         ):
             ksymtab = self.section_or_none(section_name)
             kcrctab = self.section_or_none(crc_section_name)
@@ -165,28 +320,52 @@ class ElfModule:
             if not ksymtab or not kcrctab:
                 raise ValueError(f"{self.path}: incomplete {section_name} export tables")
             entries = []
-            for name, section_index, value in symbols:
+            for symbol in symbols:
                 if (
-                    section_index == ksymtab.index
-                    and name != section_name
-                    and name.startswith("__ksymtab_")
+                    symbol.section_index == ksymtab.index
+                    and symbol.name != section_name
+                    and symbol.name.startswith("__ksymtab_")
                 ):
-                    entries.append((value, name[len("__ksymtab_") :]))
+                    entries.append((symbol.value, symbol.name[len("__ksymtab_") :]))
             entries.sort()
             if not entries:
                 raise ValueError(f"{self.path}: no symbols in {section_name}")
+            if ksymtab.size != 12 * len(entries):
+                raise ValueError(
+                    f"{self.path}: {section_name} has {ksymtab.size} bytes for "
+                    f"{len(entries)} exports"
+                )
             if kcrctab.size != 4 * len(entries):
                 raise ValueError(
                     f"{self.path}: {crc_section_name} has {kcrctab.size} bytes for "
                     f"{len(entries)} exports"
                 )
+            relocations = self._relocations(ksymtab)
             crc_data = self.slice(kcrctab.offset, kcrctab.size)
-            for index, (_value, name) in enumerate(entries):
+            for index, (value, name) in enumerate(entries):
+                namespace = ""
+                namespace_relocation = relocations.get(value + 8)
+                if namespace_relocation:
+                    target_symbol, addend = namespace_relocation
+                    if (
+                        not string_section
+                        or target_symbol.section_index != string_section.index
+                        or addend < 0
+                        or addend >= len(export_strings)
+                    ):
+                        raise ValueError(
+                            f"{self.path}: cannot resolve namespace for export {name}"
+                        )
+                    namespace = self.c_string(export_strings, addend)
                 crc = struct.unpack_from("<I", crc_data, 4 * index)[0]
-                if name in exports and exports[name] != crc:
-                    raise ValueError(f"{self.path}: conflicting export CRC for {name}")
-                exports[name] = crc
+                record = ExportRecord(name, crc, export_class, namespace)
+                if name in exports and exports[name] != record:
+                    raise ValueError(f"{self.path}: conflicting export record for {name}")
+                exports[name] = record
         return exports
+
+    def exported_crcs(self) -> dict[str, int]:
+        return {name: record.crc for name, record in self.exported_symbols().items()}
 
 
 @dataclass(frozen=True)
@@ -197,7 +376,10 @@ class ModuleRecord:
     provenance: str
     imports: dict[str, int]
     exports: dict[str, int]
+    undefined: tuple[ElfSymbol, ...]
+    export_records: dict[str, ExportRecord]
     depends: tuple[str, ...]
+    import_namespaces: tuple[str, ...]
     signed: bool
     sha256: str
 
@@ -231,14 +413,18 @@ def module_record(path: Path, area: str, provenance: str) -> ModuleRecord:
         for dependency in value.split(",")
         if dependency
     )
+    export_records = elf.exported_symbols()
     return ModuleRecord(
         area=area,
         name=name,
         path=path,
         provenance=provenance,
         imports=elf.versions(),
-        exports=elf.exported_crcs(),
+        exports={name: record.crc for name, record in export_records.items()},
+        undefined=elf.undefined_symbols(),
+        export_records=export_records,
         depends=depends,
+        import_namespaces=tuple(sorted(set(modinfo.get("import_ns", [])))),
         signed=elf.data.endswith(MODULE_SIGNATURE_MAGIC),
         sha256=sha256(path),
     )
@@ -260,9 +446,18 @@ def scan_root(root: Path, area: str, provenance: str) -> dict[str, ModuleRecord]
 
 
 def parse_symvers(path: Path) -> dict[str, list[tuple[str, int]]]:
+    return {
+        symbol: [(source, record.crc) for source, record in records]
+        for symbol, records in parse_symvers_export_records(path).items()
+    }
+
+
+def parse_symvers_export_records(
+    path: Path,
+) -> dict[str, list[tuple[str, ExportRecord]]]:
     if not path.is_file():
         raise ValueError(f"{path}: missing Module.symvers")
-    exports: dict[str, list[tuple[str, int]]] = defaultdict(list)
+    exports: dict[str, list[tuple[str, ExportRecord]]] = defaultdict(list)
     for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
         fields = line.split("\t")
         if len(fields) < 3 or not fields[0].startswith("0x"):
@@ -271,7 +466,14 @@ def parse_symvers(path: Path) -> dict[str, list[tuple[str, int]]]:
             value = int(fields[0], 16) & 0xFFFFFFFF
         except ValueError as exc:
             raise ValueError(f"{path}:{line_number}: invalid CRC") from exc
-        exports[fields[1]].append((fields[2], value))
+        export_class = fields[3] if len(fields) > 3 else "UNKNOWN"
+        namespace = fields[4] if len(fields) > 4 else ""
+        exports[fields[1]].append(
+            (
+                fields[2],
+                ExportRecord(fields[1], value, export_class, namespace),
+            )
+        )
     return exports
 
 

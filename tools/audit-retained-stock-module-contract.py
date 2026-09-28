@@ -3,10 +3,13 @@
 
 The controlled stack intentionally remains hybrid while source coverage grows.
 This tool makes that boundary explicit: it reads stock module trees, indexes
-the *candidate* provider trees plus vmlinux Module.symvers, and refuses an
-active retained module with an unresolved import, a CRC mismatch, an
-incompatible non-release vermagic suffix, an unknown signature, or a protected
-provider edge that was not included in the signed replacement closure.
+the *candidate* provider trees plus vmlinux Module.symvers, and independently
+checks every ELF undefined symbol for a real exported provider and every
+MODVERSIONS record for an exact CRC match.  It refuses an active retained
+module with an unresolved hard import, a provider-side error on a weak import,
+a CRC mismatch, an incompatible non-release vermagic suffix, an unknown
+signature, or a protected provider edge that was not included in the signed
+replacement closure.
 
 It is read-only with respect to all module inputs.  It writes a concise
 ``retained-stock-contract.tsv`` and an import-level companion report suitable
@@ -21,6 +24,7 @@ import importlib.util
 import subprocess
 import sys
 from collections import defaultdict
+from dataclasses import dataclass
 from pathlib import Path
 
 
@@ -38,6 +42,21 @@ def load_elf_helpers():
 
 
 ELF = load_elf_helpers()
+
+
+@dataclass(frozen=True)
+class Provider:
+    partition: str
+    name: str
+    crc: int
+    controlled: bool
+    export_class: str
+    namespace: str
+    sha256: str
+
+    @property
+    def label(self) -> str:
+        return f"{self.partition}:{self.name}"
 
 
 def die(message: str) -> None:
@@ -135,7 +154,7 @@ def read_controlled_modules(value: str) -> dict[str, set[str]]:
 
 
 def add_records(
-    provider_index: dict[str, list[tuple[str, str, int, bool]]],
+    provider_index: dict[str, list[Provider]],
     partition: str,
     root: Path,
     controlled: set[str],
@@ -144,9 +163,17 @@ def add_records(
         die(f"candidate provider root is not a directory: {root}")
     records = ELF.scan_root(root, partition, "CANDIDATE_PROVIDER")
     for record in records.values():
-        for symbol, value in record.exports.items():
+        for symbol, export in record.export_records.items():
             provider_index[symbol].append(
-                (partition, record.name, value, record.name in controlled)
+                Provider(
+                    partition,
+                    record.name,
+                    export.crc,
+                    record.name in controlled,
+                    export.export_class,
+                    export.namespace,
+                    record.sha256,
+                )
             )
 
 
@@ -202,6 +229,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--dependency-out", type=Path, required=True)
     parser.add_argument("--summary-out", type=Path, required=True)
+    parser.add_argument(
+        "--provider-out",
+        type=Path,
+        help="optional complete actual-export provider map",
+    )
+    parser.add_argument(
+        "--undefined-out",
+        type=Path,
+        help="optional raw undefined-symbol inventory for --focus-module",
+    )
+    parser.add_argument(
+        "--focus-module",
+        default="system_dlkm:rust_binder",
+        help="PARTITION:MODULE selected for --undefined-out",
+    )
     return parser.parse_args()
 
 
@@ -213,7 +255,12 @@ def main() -> int:
         die("stock and project public certificates are required")
     if not args.stock_root or not args.candidate_root:
         die("at least one --stock-root and --candidate-root are required")
-    if args.out.exists() or args.dependency_out.exists() or args.summary_out.exists():
+    requested_outputs = [args.out, args.dependency_out, args.summary_out]
+    if args.provider_out:
+        requested_outputs.append(args.provider_out)
+    if args.undefined_out:
+        requested_outputs.append(args.undefined_out)
+    if any(path.exists() for path in requested_outputs):
         die("refusing to overwrite retained-stock contract output")
 
     stock_roots = dict(split_assignment(value, "--stock-root") for value in args.stock_root)
@@ -251,16 +298,40 @@ def main() -> int:
     if not expected_tail:
         die("expected vermagic must include a release and feature suffix")
 
-    providers: dict[str, list[tuple[str, str, int, bool]]] = defaultdict(list)
-    for symbol, values in ELF.parse_symvers(args.vmlinux_symvers).items():
-        for source, value in values:
-            providers[symbol].append(("vmlinux", source, value, False))
+    providers: dict[str, list[Provider]] = defaultdict(list)
+    vmlinux_sha = ELF.sha256(args.vmlinux_symvers)
+    for symbol, values in ELF.parse_symvers_export_records(args.vmlinux_symvers).items():
+        for source, export in values:
+            providers[symbol].append(
+                Provider(
+                    "vmlinux",
+                    source,
+                    export.crc,
+                    False,
+                    export.export_class,
+                    export.namespace,
+                    vmlinux_sha,
+                )
+            )
     for partition, root in candidate_roots.items():
         add_records(providers, partition, root, controlled[partition])
 
+    # The same binary may be visible through more than one extracted view
+    # (for example vendor_boot and vendor_dlkm).  Preserve distinct runtime
+    # provider identities while removing exact duplicate parser records.
+    for symbol in providers:
+        providers[symbol] = sorted(
+            set(providers[symbol]),
+            key=lambda item: (item.partition, item.name, item.crc, item.namespace),
+        )
+
     rows: list[dict[str, str]] = []
     dependency_rows: list[dict[str, str]] = []
+    undefined_rows: list[dict[str, str]] = []
     totals = defaultdict(int)
+    aggregate = defaultdict(int)
+    focus_partition, focus_module = split_module_assignment(args.focus_module, "--focus-module")
+    focus_found = False
 
     for partition, root in sorted(stock_roots.items()):
         records = ELF.scan_root(root, partition, "RETAINED_STOCK")
@@ -293,18 +364,59 @@ def main() -> int:
 
             unresolved = 0
             mismatches = 0
+            namespace_failures = 0
+            provider_ambiguities = 0
             protected_failures = 0
-            for symbol, expected_crc in sorted(record.imports.items()):
+            named_undefined = record.undefined
+            hard_required = tuple(symbol for symbol in named_undefined if not symbol.weak)
+            weak_imports = tuple(symbol for symbol in named_undefined if symbol.weak)
+            versioned_imports = tuple(
+                symbol for symbol in named_undefined if symbol.name in record.imports
+            )
+            nonversioned_required = tuple(
+                symbol
+                for symbol in hard_required
+                if symbol.name not in record.imports
+            )
+            resolved = 0
+            crc_matches = 0
+
+            for undefined in sorted(named_undefined, key=lambda item: item.name):
+                symbol = undefined.name
+                expected_crc = record.imports.get(symbol)
                 candidates = providers.get(symbol, [])
-                matching = [entry for entry in candidates if entry[2] == expected_crc]
+                namespace_compatible = [
+                    entry
+                    for entry in candidates
+                    if not entry.namespace or entry.namespace in record.import_namespaces
+                ]
+                if expected_crc is None:
+                    matching = namespace_compatible
+                else:
+                    matching = [
+                        entry for entry in namespace_compatible if entry.crc == expected_crc
+                    ]
                 if matching:
                     result = "MATCH"
-                elif candidates:
+                    resolved += 1
+                    if expected_crc is not None:
+                        crc_matches += 1
+                    if len(matching) > 1:
+                        provider_ambiguities += 1
+                elif candidates and not namespace_compatible:
+                    result = "NAMESPACE_FAILURE"
+                    # A weak symbol is optional only when no provider exists.
+                    # Once find_symbol() locates a provider, namespace and
+                    # version failures return ERR_PTR and simplify_symbols()
+                    # rejects the module even for STB_WEAK.
+                    namespace_failures += 1
+                elif namespace_compatible and expected_crc is not None:
                     result = "CRC_MISMATCH"
                     mismatches += 1
                 else:
-                    result = "UNRESOLVED"
-                    unresolved += 1
+                    result = "WEAK_UNRESOLVED" if undefined.weak else "MISSING"
+                    if not undefined.weak:
+                        unresolved += 1
                 # A symbol is a protected-provider edge only when every
                 # matching runtime provider is in the controlled signing
                 # closure.  Hybrid vendor_dlkm deliberately retains exact
@@ -313,7 +425,7 @@ def main() -> int:
                 # must not turn that valid stock-to-stock dependency into a
                 # false protected-export failure.
                 controlled_provider = bool(matching) and all(
-                    entry[3] for entry in matching
+                    entry.controlled for entry in matching
                 )
                 if controlled_provider:
                     protected_failures += 1
@@ -323,23 +435,170 @@ def main() -> int:
                         "consumer": record.name,
                         "load_mode": load_mode,
                         "symbol": symbol,
-                        "expected_crc": f"0x{expected_crc:08x}",
+                        "binding": undefined.binding,
+                        "weak": "yes" if undefined.weak else "no",
+                        "has_modversions_record": "yes" if expected_crc is not None else "no",
+                        "expected_crc": (
+                            f"0x{expected_crc:08x}" if expected_crc is not None else ""
+                        ),
                         "matching_provider": ",".join(
-                            sorted(f"{entry[0]}:{entry[1]}" for entry in matching)
+                            sorted(entry.label for entry in matching)
                         ),
                         "candidate_crcs": ",".join(
-                            sorted({f"0x{entry[2]:08x}" for entry in candidates})
+                            sorted({f"0x{entry.crc:08x}" for entry in candidates})
+                        ),
+                        "candidate_namespaces": ",".join(
+                            sorted({entry.namespace or "<none>" for entry in candidates})
                         ),
                         "result": result,
                         "controlled_provider": "yes" if controlled_provider else "no",
                     }
                 )
 
+            # module_layout is loader-checked but is not an ELF undefined
+            # symbol.  Keep it in the CRC gate without inflating the raw
+            # undefined-symbol counts.
+            special_version_records = sorted(set(record.imports) - {s.name for s in named_undefined})
+            for symbol in special_version_records:
+                expected_crc = record.imports[symbol]
+                candidates = providers.get(symbol, [])
+                namespace_compatible = [
+                    entry
+                    for entry in candidates
+                    if not entry.namespace or entry.namespace in record.import_namespaces
+                ]
+                matching = [entry for entry in namespace_compatible if entry.crc == expected_crc]
+                if matching:
+                    result = "MATCH"
+                    crc_matches += 1
+                elif candidates and not namespace_compatible:
+                    result = "NAMESPACE_FAILURE"
+                    namespace_failures += 1
+                elif namespace_compatible:
+                    result = "CRC_MISMATCH"
+                    mismatches += 1
+                else:
+                    result = "MISSING"
+                    unresolved += 1
+                dependency_rows.append(
+                    {
+                        "partition": partition,
+                        "consumer": record.name,
+                        "load_mode": load_mode,
+                        "symbol": symbol,
+                        "binding": "SPECIAL",
+                        "weak": "no",
+                        "has_modversions_record": "yes",
+                        "expected_crc": f"0x{expected_crc:08x}",
+                        "matching_provider": ",".join(sorted(entry.label for entry in matching)),
+                        "candidate_crcs": ",".join(
+                            sorted({f"0x{entry.crc:08x}" for entry in candidates})
+                        ),
+                        "candidate_namespaces": ",".join(
+                            sorted({entry.namespace or "<none>" for entry in candidates})
+                        ),
+                        "result": result,
+                        "controlled_provider": "no",
+                    }
+                )
+
+            aggregate["undefined"] += len(named_undefined)
+            aggregate["hard_required"] += len(hard_required)
+            aggregate["weak"] += len(weak_imports)
+            aggregate["versioned"] += len(versioned_imports)
+            aggregate["nonversioned_required"] += len(nonversioned_required)
+            aggregate["special_version_records"] += len(special_version_records)
+            aggregate["resolved"] += resolved
+            aggregate["crc_matches"] += crc_matches
+            aggregate["missing"] += unresolved
+            aggregate["crc_mismatches"] += mismatches
+            aggregate["namespace_failures"] += namespace_failures
+            aggregate["provider_ambiguities"] += provider_ambiguities
+
+            if partition == focus_partition and record.name == focus_module:
+                focus_found = True
+                raw_symbols = ELF.ElfModule(record.path).undefined_symbols(include_null=True)
+                for index, undefined in enumerate(raw_symbols, 1):
+                    symbol = undefined.name
+                    expected_crc = record.imports.get(symbol) if symbol else None
+                    candidates = providers.get(symbol, []) if symbol else []
+                    namespace_compatible = [
+                        entry
+                        for entry in candidates
+                        if not entry.namespace or entry.namespace in record.import_namespaces
+                    ]
+                    matching = (
+                        [entry for entry in namespace_compatible if entry.crc == expected_crc]
+                        if expected_crc is not None
+                        else namespace_compatible
+                    )
+                    if not symbol:
+                        result = "TOOLCHAIN_SPECIAL_REFERENCE"
+                        runtime_required = "no"
+                    elif matching:
+                        result = "MATCH"
+                        runtime_required = "no" if undefined.weak else "yes"
+                    elif candidates and not namespace_compatible:
+                        result = "NAMESPACE_FAILURE"
+                        runtime_required = "no" if undefined.weak else "yes"
+                    elif namespace_compatible and expected_crc is not None:
+                        result = "CRC_MISMATCH"
+                        runtime_required = "no" if undefined.weak else "yes"
+                    else:
+                        result = "WEAK_UNRESOLVED" if undefined.weak else "MISSING"
+                        runtime_required = "no" if undefined.weak else "yes"
+                    reported_providers = matching if matching else candidates
+                    undefined_rows.append(
+                        {
+                            "index": str(index),
+                            "symbol": symbol or "<anonymous:STN_UNDEF>",
+                            "binding": undefined.binding,
+                            "visibility": undefined.visibility,
+                            "symbol_type": undefined.symbol_type,
+                            "ELF_undefined": "yes",
+                            "has_MODVERSIONS_record": "yes" if expected_crc is not None else "no",
+                            "expected_CRC": (
+                                f"0x{expected_crc:08x}" if expected_crc is not None else ""
+                            ),
+                            "provider": ",".join(
+                                sorted(entry.label for entry in reported_providers)
+                            ),
+                            "provider_kind": ",".join(
+                                sorted(
+                                    {
+                                        "vmlinux"
+                                        if entry.partition == "vmlinux"
+                                        else "module"
+                                        for entry in reported_providers
+                                    }
+                                )
+                            ),
+                            "provider_partition": ",".join(
+                                sorted({entry.partition for entry in reported_providers})
+                            ),
+                            "weak": "yes" if undefined.weak else "no",
+                            "runtime_required": runtime_required,
+                            "candidate_present": "yes" if candidates else "no",
+                            "candidate_CRC": ",".join(
+                                sorted({f"0x{entry.crc:08x}" for entry in candidates})
+                            ),
+                            "result": result,
+                            "notes": (
+                                "mandatory ELF symbol-table entry zero; loader starts at symbol 1"
+                                if not symbol
+                                else "unresolved STB_WEAK is accepted only when no provider exists"
+                                if undefined.weak and not candidates
+                                else ""
+                            ),
+                        }
+                    )
+
             if not active:
                 classification = "DORMANT"
             elif (
                 unresolved
                 or mismatches
+                or namespace_failures
                 or protected_failures
                 or vermagic_contract == "INCOMPATIBLE"
                 or signing_contract == "UNKNOWN_SIGNER"
@@ -362,8 +621,18 @@ def main() -> int:
                     "signature_id": sig_id,
                     "signing_contract": signing_contract,
                     "imports": str(len(record.imports)),
+                    "undefined_elf_symbols": str(len(named_undefined)),
+                    "hard_required": str(len(hard_required)),
+                    "weak_imports": str(len(weak_imports)),
+                    "versioned_imports": str(len(versioned_imports)),
+                    "nonversioned_required": str(len(nonversioned_required)),
+                    "special_version_records": str(len(special_version_records)),
+                    "resolved": str(resolved),
+                    "crc_matches": str(crc_matches),
                     "unresolved_imports": str(unresolved),
                     "crc_mismatches": str(mismatches),
+                    "namespace_failures": str(namespace_failures),
+                    "provider_ambiguities": str(provider_ambiguities),
                     "protected_export_failures": str(protected_failures),
                     "release_token": release_token,
                     "reason": (
@@ -379,12 +648,16 @@ def main() -> int:
     header = [
         "module", "partition", "stock_path", "load_mode", "classification", "vermagic",
         "vermagic_contract", "signature", "signature_id", "signing_contract", "imports",
-        "unresolved_imports", "crc_mismatches", "protected_export_failures", "release_token",
+        "undefined_elf_symbols", "hard_required", "weak_imports", "versioned_imports",
+        "nonversioned_required", "special_version_records", "resolved", "crc_matches",
+        "unresolved_imports", "crc_mismatches", "namespace_failures", "provider_ambiguities",
+        "protected_export_failures", "release_token",
         "reason",
     ]
     dependency_header = [
-        "partition", "consumer", "load_mode", "symbol", "expected_crc", "matching_provider",
-        "candidate_crcs", "result", "controlled_provider",
+        "partition", "consumer", "load_mode", "symbol", "binding", "weak",
+        "has_modversions_record", "expected_crc", "matching_provider", "candidate_crcs",
+        "candidate_namespaces", "result", "controlled_provider",
     ]
     for path in (args.out, args.dependency_out, args.summary_out):
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -396,6 +669,47 @@ def main() -> int:
         writer = csv.DictWriter(output, fieldnames=dependency_header, delimiter="\t", lineterminator="\n")
         writer.writeheader()
         writer.writerows(dependency_rows)
+    if args.provider_out:
+        args.provider_out.parent.mkdir(parents=True, exist_ok=True)
+        provider_header = [
+            "symbol", "provider", "partition", "export_class", "namespace",
+            "provider_sha256", "source_available", "notes",
+        ]
+        with args.provider_out.open("w", encoding="utf-8", newline="") as output:
+            writer = csv.DictWriter(
+                output, fieldnames=provider_header, delimiter="\t", lineterminator="\n"
+            )
+            writer.writeheader()
+            for symbol in sorted(providers):
+                for provider in providers[symbol]:
+                    writer.writerow(
+                        {
+                            "symbol": symbol,
+                            "provider": provider.name,
+                            "partition": provider.partition,
+                            "export_class": provider.export_class,
+                            "namespace": provider.namespace,
+                            "provider_sha256": provider.sha256,
+                            "source_available": "yes" if provider.partition == "vmlinux" else "unknown",
+                            "notes": "actual __ksymtab export" if provider.partition != "vmlinux" else "exact candidate Module.symvers export",
+                        }
+                    )
+    if args.undefined_out:
+        if not focus_found:
+            die(f"focus module not found: {args.focus_module}")
+        args.undefined_out.parent.mkdir(parents=True, exist_ok=True)
+        undefined_header = [
+            "index", "symbol", "binding", "visibility", "symbol_type", "ELF_undefined",
+            "has_MODVERSIONS_record", "expected_CRC", "provider", "provider_kind",
+            "provider_partition", "weak", "runtime_required", "candidate_present",
+            "candidate_CRC", "result", "notes",
+        ]
+        with args.undefined_out.open("w", encoding="utf-8", newline="") as output:
+            writer = csv.DictWriter(
+                output, fieldnames=undefined_header, delimiter="\t", lineterminator="\n"
+            )
+            writer.writeheader()
+            writer.writerows(undefined_rows)
     args.summary_out.write_text(
         "\n".join(
             [
@@ -405,6 +719,18 @@ def main() -> int:
                 f"compatible={totals['COMPATIBLE']}",
                 f"dormant={totals['DORMANT']}",
                 f"blocker={totals['BLOCKER']}",
+                f"undefined_elf_symbols={aggregate['undefined']}",
+                f"hard_required={aggregate['hard_required']}",
+                f"weak={aggregate['weak']}",
+                f"versioned_imports={aggregate['versioned']}",
+                f"nonversioned_required={aggregate['nonversioned_required']}",
+                f"special_version_records={aggregate['special_version_records']}",
+                f"resolved={aggregate['resolved']}",
+                f"missing={aggregate['missing']}",
+                f"crc_matches={aggregate['crc_matches']}",
+                f"crc_mismatches={aggregate['crc_mismatches']}",
+                f"namespace_failures={aggregate['namespace_failures']}",
+                f"provider_ambiguities={aggregate['provider_ambiguities']}",
                 f"result={'PASS' if not totals['BLOCKER'] else 'FAIL'}",
             ]
         )
