@@ -92,6 +92,10 @@ def validate_zip(args: argparse.Namespace) -> None:
 
     boot_hash = sha256_file(boot)
     boot_size = boot.stat().st_size
+    if args.stock_system_dlkm_bytes <= 0:
+        fail("stock system_dlkm size must be positive")
+    if args.stock_system_dlkm_blocks * 4096 != args.stock_system_dlkm_bytes:
+        fail("stock system_dlkm block count does not match its byte size")
     if boot_size != args.boot_bytes:
         fail(f"boot size {boot_size} does not match expected {args.boot_bytes}")
     with boot.open("rb") as stream:
@@ -150,8 +154,8 @@ def validate_zip(args: argparse.Namespace) -> None:
         "boot_partition_bytes": str(args.boot_bytes),
         "boot_sha256": boot_hash,
         "system_dlkm_contract": "stock_oxygenos_erofs",
-        "stock_system_dlkm_bytes": "14131200",
-        "stock_system_dlkm_blocks": "3450",
+        "stock_system_dlkm_bytes": str(args.stock_system_dlkm_bytes),
+        "stock_system_dlkm_blocks": str(args.stock_system_dlkm_blocks),
         "stock_system_dlkm_erofs_magic": "e2e1f5e0",
         "stock_system_dlkm_sha256": args.stock_system_dlkm_sha256,
         "installer_writes": "boot_active_slot_only",
@@ -254,6 +258,8 @@ def main() -> int:
     parser.add_argument("--kernel-release", required=True)
     parser.add_argument("--source-commit", required=True)
     parser.add_argument("--stock-system-dlkm-sha256", required=True)
+    parser.add_argument("--stock-system-dlkm-bytes", type=int, default=14131200)
+    parser.add_argument("--stock-system-dlkm-blocks", type=int, default=3450)
     parser.add_argument("--physical-qualification", required=True)
     parser.add_argument("--boot-bytes", type=int, default=100663296)
     args = parser.parse_args()
