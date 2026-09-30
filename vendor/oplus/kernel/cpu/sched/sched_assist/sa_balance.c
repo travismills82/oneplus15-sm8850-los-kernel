@@ -759,36 +759,6 @@ __maybe_unused static struct task_struct *detach_one_task(struct lb_env *env)
 	return NULL;
 }
 
-/*
- * attach_task() -- attach the task detached by detach_task() to its new rq.
- */
-static void attach_task(struct rq *rq, struct task_struct *p)
-{
-	lockdep_assert_rq_held(rq);
-
-	WARN_ON(task_rq(p) != rq);
-	activate_task(rq, p, ENQUEUE_NOCLOCK);
-	/*check_preempt_curr changed to wakeup_preempt by new feature CONFIG_SCHED_PROXY_EXEC KERNEL 6.12*/
-	wakeup_preempt(rq, p, 0);
-}
-
-/*
- * attach_one_task() -- attaches the task returned from detach_one_task() to
- * its new rq.
- */
-static void attach_one_task(struct rq *rq, struct task_struct *p)
-{
-	struct rq_flags rf;
-
-	rq_lock(rq, &rf);
-	update_rq_clock(rq);
-	attach_task(rq, p);
-	rq_unlock(rq, &rf);
-}
-
-/******** The above code is copied from fair.c ********/
-
-
 bool test_task_ux_lb(struct task_struct *task)
 {
 	if (!task || !test_task_is_fair(task))
@@ -4704,6 +4674,5 @@ void oplus_lb_test_proc_deinit(struct proc_dir_entry *pde)
 	remove_proc_entry("lb_test", pde);
 }
 #endif
-
 
 
