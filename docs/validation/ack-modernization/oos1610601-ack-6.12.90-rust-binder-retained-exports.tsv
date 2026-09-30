@@ -1,0 +1,6 @@
+symbol	stock consumer	stock expected CRC	candidate natural CRC	implementation present	export present before trim	trimmed without KMI entry	compatibility treatment	final expected CRC	status
+_RNvMs1_NtNtCs3o2tGsuHyou_4core3fmt8buildersNtB5_11DebugStruct5field	system_dlkm/rust_binder.ko	0xd14c62f4	0xd14c62f4	yes	yes	yes	QCOM KMI retention only	0xd14c62f4	APPROVED_RETAINED_EXPORT
+_RNvMs1_NtNtCs3o2tGsuHyou_4core3fmt8buildersNtB5_11DebugStruct6finish	system_dlkm/rust_binder.ko	0x9b02ac3f	0x9b02ac3f	yes	yes	yes	QCOM KMI retention only	0x9b02ac3f	APPROVED_RETAINED_EXPORT
+_RNvMs7_NtCs3o2tGsuHyou_4core3fmtNtB5_9Formatter12debug_struct	system_dlkm/rust_binder.ko	0xf40fe9cc	0xf40fe9cc	yes	yes	yes	QCOM KMI retention only	0xf40fe9cc	APPROVED_RETAINED_EXPORT
+_RNvMs_NtNtCsdfZWD8DztAw_6kernel4sync4pollNtB4_11PollCondVar5clear	system_dlkm/rust_binder.ko	0x824caeed	0x824caeed	yes	yes	yes	QCOM KMI retention only	0x824caeed	APPROVED_RETAINED_EXPORT
+_RNvXs4_NvNtNtCsdfZWD8DztAw_6kernel4sync4poll1__NtB7_11PollCondVarNtNtNtCs3o2tGsuHyou_4core3ops4drop4Drop4drop	system_dlkm/rust_binder.ko	0x5f4072b6	0xa42d2e37	yes	yes	yes	restore qualified stock-visible Pin and zero-sized drop-token type representation with GENDWARFKSYMS type_string records; runtime code and layout unchanged	0x5f4072b6	APPROVED_TYPE_VISIBILITY_COMPATIBILITY
