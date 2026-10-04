@@ -7,17 +7,59 @@ Kernel releases are firmware-specific. Never cross-flash a boot image merely
 because it targets the same phone family; each OxygenOS build has its own
 kernel, module, FBE/user0, and boot-container contract.
 
-## Stable releases
+## Current releases
 
-| Firmware | Device physically tested | Kernel | Release tag |
-|---|---|---|---|
-| OxygenOS 16.0.10.601(EX01) | CPH2749 / OP611FL1 | `6.12.89-android16-6-o-g5d9b99c7d104-4k` | `oos16.0.10.601-linux-6.12.89-kmi6` |
-| OxygenOS 16.0.9.400(EX01) | CPH2749 / OP611FL1 | `6.12.52-android16-5-o-gfa9fe14314c7-4k` | `oos16.0.9.400-ack-6.12.52` |
-| OxygenOS 16.0.10.500(EX01) | CPH2747 | `6.12.37-android16-5-o-g57b52d3bb803-4k` | `oos16.0.10.500-ack-6.12.37` |
+| Firmware | Device physically tested | Kernel | Status | Release tag |
+|---|---|---|---|---|
+| OxygenOS 16.0.10.601(EX01) | CPH2749 / OP611FL1 | `6.12.95-android16-6-o-g02714090683b-4k` | Boot/stability canary | `oos16.0.10.601-linux-6.12.95-kmi6-canary` |
+| OxygenOS 16.0.10.601(EX01) | CPH2749 / OP611FL1 | `6.12.89-android16-6-o-g5d9b99c7d104-4k` | Fully qualified rollback baseline | `oos16.0.10.601-linux-6.12.89-kmi6` |
+| OxygenOS 16.0.9.400(EX01) | CPH2749 / OP611FL1 | `6.12.52-android16-5-o-gfa9fe14314c7-4k` | Fully qualified | `oos16.0.9.400-ack-6.12.52` |
+| OxygenOS 16.0.10.500(EX01) | CPH2747 | `6.12.37-android16-5-o-g57b52d3bb803-4k` | Fully qualified | `oos16.0.10.500-ack-6.12.37` |
 
 Use only the release matching the installed firmware.
 
-## Linux 6.12.89 stable for OxygenOS 16.0.10.601
+## Linux 6.12.95 boot/stability canary for OxygenOS 16.0.10.601
+
+| Field | Tested value |
+|---|---|
+| Device family | OnePlus 15 / `infiniti` / `canoe` |
+| Physical device | CPH2749 / OP611FL1 |
+| Firmware | `CPH2749_16.0.10.601(EX01)` |
+| Kernel | `6.12.95-android16-6-o-g02714090683b-4k` |
+| KMI generation | Android 16 generation 6 |
+| Tested runtime source | `02714090683b0c04a1cc5de357c579b18dc814dd` |
+| `boot.img` size | 100,663,296 bytes |
+| `boot.img` SHA-256 | `f4c64ffb73506b740aee22fbc1f2f1d573a4972784bf598f29a4c012f09c81f2` |
+| Embedded Image SHA-256 | `c0fc3d7b443731bcc2bc48826269f438d9f3bb5e3f608038e4cfdf13c0e9ae2d` |
+| TWRP ZIP SHA-256 | `1a91b0bc409fd7aa68f3ac3bd524dfcd4b5bd5ab194f051a252500a3e9148ca8` |
+
+This boot-only canary preserves the exact OxygenOS 16.0.10.601 stock DLKM,
+`vendor_boot`, DTBO, VBMeta, metadata, and userdata payloads. All 1,021 stock
+modules passed the full ELF and MODVERSIONS oracle: 985 active compatible, 36
+dormant, 56,594 hard imports resolved, 57,621 version records matched, and
+zero missing providers, CRC mismatches, namespace failures, or active
+blockers.
+
+The exact release image passed a full `boot_a` write/read-back, TWRP
+metadata/PIN decryption, userdata mapper creation, F2FS `/data` with
+`inlinecrypt`, CE/DE access, two clean Android boots, user0
+`RUNNING_UNLOCKED`, Rust Binder, Wi-Fi 6 GHz/WPA3-SAE, cellular data,
+Bluetooth, NFC, camera launch, USB/ADB, charging, ZRAM, and targeted fatal
+kernel/module scans.
+
+This remains a prerelease because USB-disconnected deep suspend and direct
+owner confirmation of audio playback and fingerprint authentication were not
+completed during the 6.12.95 session. The Oplus watchdog reports the same
+`adci_thread`, `zram_comp`, and `hfi_core_dbg_cl` waits already observed on the
+known-good 6.12.91 baseline; no 6.12.95-specific panic, Oops, BUG, lockup, RCU
+stall, module-loader failure, or DRM/GEM warning was observed.
+
+See:
+
+- [6.12.95 boot/stability canary](docs/validation/firmware-16.0.10.601/oos1610601-linux-6.12.95-boot-canary-2026-10-04.md)
+- [6.12.95 release notes](docs/releases/oos16.0.10.601-linux-6.12.95-kmi6-canary/release-notes.md)
+
+## Linux 6.12.89 qualified rollback baseline for OxygenOS 16.0.10.601
 
 | Field | Qualified value |
 |---|---|
