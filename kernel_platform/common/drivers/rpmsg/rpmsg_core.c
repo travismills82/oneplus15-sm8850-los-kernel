@@ -20,6 +20,8 @@
 
 #include "rpmsg_internal.h"
 
+static DEFINE_MUTEX(rpmsg_driver_override_lock);
+
 const struct class rpmsg_class = {
 	.name = "rpmsg",
 };
@@ -421,6 +423,35 @@ rpmsg_show_attr(src, src, "0x%x\n");
 rpmsg_show_attr(dst, dst, "0x%x\n");
 rpmsg_show_attr(announce, announce ? "true" : "false", "%s\n");
 
+static ssize_t driver_override_store(struct device *dev,
+				     struct device_attribute *attr,
+				     const char *buf, size_t count)
+{
+	struct rpmsg_device *rpdev = to_rpmsg_device(dev);
+	int ret;
+
+	mutex_lock(&rpmsg_driver_override_lock);
+	ret = driver_set_override(dev, &rpdev->driver_override, buf, count);
+	mutex_unlock(&rpmsg_driver_override_lock);
+	if (ret)
+		return ret;
+
+	return count;
+}
+
+static ssize_t driver_override_show(struct device *dev,
+				    struct device_attribute *attr, char *buf)
+{
+	struct rpmsg_device *rpdev = to_rpmsg_device(dev);
+	ssize_t len;
+
+	mutex_lock(&rpmsg_driver_override_lock);
+	len = sysfs_emit(buf, "%s\n", rpdev->driver_override);
+	mutex_unlock(&rpmsg_driver_override_lock);
+	return len;
+}
+static DEVICE_ATTR_RW(driver_override);
+
 static ssize_t modalias_show(struct device *dev,
 			     struct device_attribute *attr, char *buf)
 {
@@ -441,6 +472,7 @@ static struct attribute *rpmsg_dev_attrs[] = {
 	&dev_attr_dst.attr,
 	&dev_attr_src.attr,
 	&dev_attr_announce.attr,
+	&dev_attr_driver_override.attr,
 	NULL,
 };
 ATTRIBUTE_GROUPS(rpmsg_dev);
@@ -461,7 +493,11 @@ static int rpmsg_dev_match(struct device *dev, const struct device_driver *drv)
 	unsigned int i;
 	int ret;
 
-	ret = device_match_driver_override(dev, drv);
+	ret = -1;
+	mutex_lock(&rpmsg_driver_override_lock);
+	if (rpdev->driver_override)
+		ret = !strcmp(rpdev->driver_override, drv->name);
+	mutex_unlock(&rpmsg_driver_override_lock);
 	if (ret >= 0)
 		return ret;
 
@@ -573,7 +609,6 @@ static const struct bus_type rpmsg_bus = {
 	.name		= "rpmsg",
 	.match		= rpmsg_dev_match,
 	.dev_groups	= rpmsg_dev_groups,
-	.driver_override = true,
 	.uevent		= rpmsg_uevent,
 	.probe		= rpmsg_dev_probe,
 	.remove		= rpmsg_dev_remove,
@@ -599,9 +634,13 @@ int rpmsg_register_device_override(struct rpmsg_device *rpdev,
 
 	device_initialize(dev);
 	if (driver_override) {
-		ret = device_set_driver_override(dev, driver_override);
+		mutex_lock(&rpmsg_driver_override_lock);
+		ret = driver_set_override(dev, &rpdev->driver_override,
+					  driver_override,
+					  strlen(driver_override));
+		mutex_unlock(&rpmsg_driver_override_lock);
 		if (ret) {
-			dev_err(dev, "device_set_driver_override() failed: %d\n", ret);
+			dev_err(dev, "device_set_override failed: %d\n", ret);
 			put_device(dev);
 			return ret;
 		}
@@ -610,6 +649,10 @@ int rpmsg_register_device_override(struct rpmsg_device *rpdev,
 	ret = device_add(dev);
 	if (ret) {
 		dev_err(dev, "device_add failed: %d\n", ret);
+		mutex_lock(&rpmsg_driver_override_lock);
+		kfree(rpdev->driver_override);
+		rpdev->driver_override = NULL;
+		mutex_unlock(&rpmsg_driver_override_lock);
 		put_device(dev);
 	}
 

@@ -137,6 +137,8 @@ struct cdx_controller {
  * @enabled: is this bus enabled
  * @msi_dev_id: MSI Device ID associated with CDX device
  * @num_msi: Number of MSI's supported by the device
+ * @driver_override: driver name to force a match; use the CDX sysfs
+ *                   driver_override attribute to set or clear it
  * @irqchip_lock: lock to synchronize irq/msi configuration
  * @msi_write_pending: MSI write pending for this device
  */
@@ -162,6 +164,7 @@ struct cdx_device {
 	bool enabled;
 	u32 msi_dev_id;
 	u32 num_msi;
+	const char *driver_override;
 	struct mutex irqchip_lock;
 	bool msi_write_pending;
 };

@@ -79,6 +79,8 @@
 static DEFINE_IDA(cdx_controller_ida);
 /* Lock to protect controller ops */
 static DEFINE_MUTEX(cdx_controller_lock);
+/* Serialize legacy driver_override readers and writers. */
+static DEFINE_MUTEX(cdx_driver_override_lock);
 /* Debugfs dir for cdx bus */
 static struct dentry *cdx_debugfs_dir;
 
@@ -156,6 +158,10 @@ static int cdx_unregister_device(struct device *dev,
 	} else {
 		cdx_destroy_res_attr(cdx_dev, MAX_CDX_DEV_RESOURCES);
 		debugfs_remove_recursive(cdx_dev->debugfs_dir);
+		mutex_lock(&cdx_driver_override_lock);
+		kfree(cdx_dev->driver_override);
+		cdx_dev->driver_override = NULL;
+		mutex_unlock(&cdx_driver_override_lock);
 	}
 
 	/*
@@ -273,9 +279,13 @@ static int cdx_bus_match(struct device *dev, const struct device_driver *drv)
 
 	ids = cdx_drv->match_id_table;
 
-	/* When driver_override is set, only bind to the matching driver */
-	ret = device_match_driver_override(dev, drv);
-	if (ret == 0)
+	/* When driver_override is set, only bind to the matching driver. */
+	ret = -1;
+	mutex_lock(&cdx_driver_override_lock);
+	if (cdx_dev->driver_override)
+		ret = !strcmp(cdx_dev->driver_override, drv->name);
+	mutex_unlock(&cdx_driver_override_lock);
+	if (!ret)
 		return false;
 
 	found_id = cdx_match_id(ids, cdx_dev);
@@ -449,6 +459,38 @@ static ssize_t modalias_show(struct device *dev, struct device_attribute *attr,
 }
 static DEVICE_ATTR_RO(modalias);
 
+static ssize_t driver_override_store(struct device *dev,
+				     struct device_attribute *attr,
+				     const char *buf, size_t count)
+{
+	struct cdx_device *cdx_dev = to_cdx_device(dev);
+	int ret;
+
+	if (WARN_ON(dev->bus != &cdx_bus_type))
+		return -EINVAL;
+
+	mutex_lock(&cdx_driver_override_lock);
+	ret = driver_set_override(dev, &cdx_dev->driver_override, buf, count);
+	mutex_unlock(&cdx_driver_override_lock);
+	if (ret)
+		return ret;
+
+	return count;
+}
+
+static ssize_t driver_override_show(struct device *dev,
+				    struct device_attribute *attr, char *buf)
+{
+	struct cdx_device *cdx_dev = to_cdx_device(dev);
+	ssize_t len;
+
+	mutex_lock(&cdx_driver_override_lock);
+	len = sysfs_emit(buf, "%s\n", cdx_dev->driver_override);
+	mutex_unlock(&cdx_driver_override_lock);
+	return len;
+}
+static DEVICE_ATTR_RW(driver_override);
+
 static ssize_t enable_store(struct device *dev, struct device_attribute *attr,
 			    const char *buf, size_t count)
 {
@@ -518,6 +560,7 @@ static struct attribute *cdx_dev_attrs[] = {
 	&dev_attr_class.attr,
 	&dev_attr_revision.attr,
 	&dev_attr_modalias.attr,
+	&dev_attr_driver_override.attr,
 	NULL,
 };
 
@@ -618,7 +661,6 @@ ATTRIBUTE_GROUPS(cdx_bus);
 
 struct bus_type cdx_bus_type = {
 	.name		= "cdx",
-	.driver_override = true,
 	.match		= cdx_bus_match,
 	.probe		= cdx_probe,
 	.remove		= cdx_remove,
