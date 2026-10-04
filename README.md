@@ -11,14 +11,14 @@ kernel, module, FBE/user0, and boot-container contract.
 
 | Firmware | Device physically tested | Kernel | Status | Release tag |
 |---|---|---|---|---|
-| OxygenOS 16.0.10.601(EX01) | CPH2749 / OP611FL1 | `6.12.95-android16-6-o-g02714090683b-4k` | Boot/stability canary | `oos16.0.10.601-linux-6.12.95-kmi6-canary` |
+| OxygenOS 16.0.10.601(EX01) | CPH2749 / OP611FL1 | `6.12.95-android16-6-o-g02714090683b-4k` | Boot/stability release | `oos16.0.10.601-linux-6.12.95-kmi6-canary` |
 | OxygenOS 16.0.10.601(EX01) | CPH2749 / OP611FL1 | `6.12.89-android16-6-o-g5d9b99c7d104-4k` | Fully qualified rollback baseline | `oos16.0.10.601-linux-6.12.89-kmi6` |
 | OxygenOS 16.0.9.400(EX01) | CPH2749 / OP611FL1 | `6.12.52-android16-5-o-gfa9fe14314c7-4k` | Fully qualified | `oos16.0.9.400-ack-6.12.52` |
 | OxygenOS 16.0.10.500(EX01) | CPH2747 | `6.12.37-android16-5-o-g57b52d3bb803-4k` | Fully qualified | `oos16.0.10.500-ack-6.12.37` |
 
 Use only the release matching the installed firmware.
 
-## Linux 6.12.95 boot/stability canary for OxygenOS 16.0.10.601
+## Linux 6.12.95 boot/stability release for OxygenOS 16.0.10.601
 
 | Field | Tested value |
 |---|---|
@@ -47,7 +47,8 @@ metadata/PIN decryption, userdata mapper creation, F2FS `/data` with
 Bluetooth, NFC, camera launch, USB/ADB, charging, ZRAM, and targeted fatal
 kernel/module scans.
 
-This remains a prerelease because USB-disconnected deep suspend and direct
+This is published as a normal release. It is not yet promoted as the fully
+qualified rollback baseline because USB-disconnected deep suspend and direct
 owner confirmation of audio playback and fingerprint authentication were not
 completed during the 6.12.95 session. The Oplus watchdog reports the same
 `adci_thread`, `zram_comp`, and `hfi_core_dbg_cl` waits already observed on the
@@ -56,7 +57,7 @@ stall, module-loader failure, or DRM/GEM warning was observed.
 
 See:
 
-- [6.12.95 boot/stability canary](docs/validation/firmware-16.0.10.601/oos1610601-linux-6.12.95-boot-canary-2026-10-04.md)
+- [6.12.95 boot/stability validation](docs/validation/firmware-16.0.10.601/oos1610601-linux-6.12.95-boot-canary-2026-10-04.md)
 - [6.12.95 release notes](docs/releases/oos16.0.10.601-linux-6.12.95-kmi6-canary/release-notes.md)
 
 ## Linux 6.12.89 qualified rollback baseline for OxygenOS 16.0.10.601

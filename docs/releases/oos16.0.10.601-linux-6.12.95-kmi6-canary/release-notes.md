@@ -3,7 +3,7 @@
 This is the physically boot-tested, boot-only Linux 6.12.95 canary for the
 OnePlus 15 `infiniti` / `canoe` running OxygenOS 16.0.10.601(EX01).
 
-It is published as a prerelease. Linux 6.12.89 remains the fully qualified
+It is published as a normal release. Linux 6.12.89 remains the fully qualified
 rollback baseline until the remaining 6.12.95 qualification items are
 completed.
 
@@ -57,7 +57,8 @@ The exact released boot image passed:
 USB-disconnected deep suspend was not tested. Audio service and fingerprint
 HAL health passed, but direct owner confirmation of playback and biometric
 authentication was not completed during this session. The release therefore
-remains a boot/stability canary rather than a fully qualified stable baseline.
+is classified as a boot/stability release rather than a fully qualified stable
+baseline.
 
 The Oplus watchdog reported the same `adci_thread`, `zram_comp`, and
 `hfi_core_dbg_cl` completion waits seen on the known-good 6.12.91 baseline.
