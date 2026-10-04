@@ -164,7 +164,7 @@ static void intel_svm_domain_free(struct iommu_domain *domain)
 }
 
 static const struct iommu_domain_ops intel_svm_domain_ops = {
-	.set_dev_pasid		= intel_svm_set_dev_pasid,
+	.set_dev_pasid_replace	= intel_svm_set_dev_pasid,
 	.free			= intel_svm_domain_free
 };
 

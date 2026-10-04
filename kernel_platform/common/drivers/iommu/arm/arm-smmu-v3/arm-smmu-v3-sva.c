@@ -380,7 +380,7 @@ static void arm_smmu_sva_domain_free(struct iommu_domain *domain)
 }
 
 static const struct iommu_domain_ops arm_smmu_sva_domain_ops = {
-	.set_dev_pasid		= arm_smmu_sva_set_dev_pasid,
+	.set_dev_pasid_replace	= arm_smmu_sva_set_dev_pasid,
 	.free			= arm_smmu_sva_domain_free
 };
 

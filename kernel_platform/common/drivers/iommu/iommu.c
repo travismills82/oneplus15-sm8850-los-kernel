@@ -3428,8 +3428,12 @@ static int __iommu_set_group_pasid(struct iommu_domain *domain,
 
 	for_each_group_device(group, device) {
 		if (device->dev->iommu->max_pasids > 0) {
-			ret = domain->ops->set_dev_pasid(domain, device->dev,
-							 pasid, NULL);
+			if (domain->ops->set_dev_pasid_replace)
+				ret = domain->ops->set_dev_pasid_replace(
+						domain, device->dev, pasid, NULL);
+			else
+				ret = domain->ops->set_dev_pasid(
+						domain, device->dev, pasid);
 			if (ret)
 				goto err_revert;
 		}
@@ -3483,7 +3487,8 @@ int iommu_attach_device_pasid(struct iommu_domain *domain,
 	struct group_device *device;
 	int ret;
 
-	if (!domain->ops->set_dev_pasid)
+	if (!domain->ops->set_dev_pasid &&
+	    !domain->ops->set_dev_pasid_replace)
 		return -EOPNOTSUPP;
 
 	if (!group)

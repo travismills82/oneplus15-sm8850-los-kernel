@@ -4641,7 +4641,7 @@ static struct iommu_domain identity_domain = {
 	.type = IOMMU_DOMAIN_IDENTITY,
 	.ops = &(const struct iommu_domain_ops) {
 		.attach_dev	= identity_domain_attach_dev,
-		.set_dev_pasid	= identity_domain_set_dev_pasid,
+		.set_dev_pasid_replace = identity_domain_set_dev_pasid,
 	},
 };
 
@@ -4667,7 +4667,7 @@ const struct iommu_ops intel_iommu_ops = {
 	.page_response		= intel_iommu_page_response,
 	.default_domain_ops = &(const struct iommu_domain_ops) {
 		.attach_dev		= intel_iommu_attach_device,
-		.set_dev_pasid		= intel_iommu_set_dev_pasid,
+		.set_dev_pasid_replace	= intel_iommu_set_dev_pasid,
 		.map_pages		= intel_iommu_map_pages,
 		.unmap_pages		= intel_iommu_unmap_pages,
 		.iotlb_sync_map		= intel_iommu_iotlb_sync_map,

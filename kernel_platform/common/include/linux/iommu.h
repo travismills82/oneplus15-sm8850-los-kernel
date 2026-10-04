@@ -631,7 +631,10 @@ struct iommu_map_cookie_sg {
  * * EBUSY	- device is attached to a domain and cannot be changed
  * * ENODEV	- device specific errors, not able to be attached
  * * <others>	- treated as ENODEV by the caller. Use is discouraged
- * @set_dev_pasid: set an iommu domain to a pasid of device
+ * @set_dev_pasid: set an iommu domain to a pasid of device using the legacy
+ *                 Android KMI callback
+ * @set_dev_pasid_replace: set an iommu domain to a pasid of device while
+ *                        providing the domain being replaced
  * @map_pages: map a physically contiguous set of pages of the same size to
  *             an iommu domain.
  * @unmap_pages: unmap a number of pages of the same size from an iommu domain
@@ -662,7 +665,7 @@ struct iommu_map_cookie_sg {
 struct iommu_domain_ops {
 	int (*attach_dev)(struct iommu_domain *domain, struct device *dev);
 	int (*set_dev_pasid)(struct iommu_domain *domain, struct device *dev,
-			     ioasid_t pasid, struct iommu_domain *old);
+			     ioasid_t pasid);
 
 	int (*map_pages)(struct iommu_domain *domain, unsigned long iova,
 			 phys_addr_t paddr, size_t pgsize, size_t pgcount,
@@ -694,7 +697,9 @@ struct iommu_domain_ops {
 	int (*add_deferred_map_sg)(struct iommu_map_cookie_sg *cookie,
 				   phys_addr_t paddr, size_t pgsize, size_t pgcount);
 	size_t (*consume_deferred_map_sg)(struct iommu_map_cookie_sg *cookie);
-	ANDROID_KABI_RESERVE(1);
+	ANDROID_KABI_USE(1, int (*set_dev_pasid_replace)(
+			struct iommu_domain *domain, struct device *dev,
+			ioasid_t pasid, struct iommu_domain *old));
 	ANDROID_KABI_RESERVE(2);
 	ANDROID_KABI_RESERVE(3);
 	ANDROID_KABI_RESERVE(4);

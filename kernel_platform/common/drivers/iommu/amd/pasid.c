@@ -172,7 +172,7 @@ static void iommu_sva_domain_free(struct iommu_domain *domain)
 }
 
 static const struct iommu_domain_ops amd_sva_domain_ops = {
-	.set_dev_pasid = iommu_sva_set_dev_pasid,
+	.set_dev_pasid_replace = iommu_sva_set_dev_pasid,
 	.free	       = iommu_sva_domain_free
 };
 

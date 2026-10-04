@@ -411,7 +411,7 @@ static struct iommu_ops pviommu_ops = {
 		.map_pages	= pviommu_map_pages,
 		.unmap_pages	= pviommu_unmap_pages,
 		.iova_to_phys	= pviommu_iova_to_phys,
-		.set_dev_pasid	= pviommu_set_dev_pasid,
+		.set_dev_pasid_replace = pviommu_set_dev_pasid,
 		.free		= pviommu_domain_free,
 	}
 };
