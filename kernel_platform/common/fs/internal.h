@@ -102,6 +102,9 @@ struct file *alloc_empty_file_noaccount(int flags, const struct cred *cred);
 struct file *alloc_empty_backing_file(int flags, const struct cred *cred,
 				      const struct file *user_file);
 void backing_file_set_user_path(struct file *f, const struct path *path);
+int backing_file_mmap_security(struct vm_area_struct *vma,
+			       struct file *backing_file,
+			       struct file *user_file);
 
 static inline void file_put_write_access(struct file *file)
 {

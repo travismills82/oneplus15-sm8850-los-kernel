@@ -354,8 +354,9 @@ struct fuse_backing *fuse_passthrough_open(struct file *file,
 		goto out;
 
 	/* Allocate backing file per fuse file to store fuse path */
-	backing_file = backing_file_open(file, file->f_flags,
-					 &fb->file->f_path, fb->cred);
+	backing_file = backing_file_open_with_user_file(file, file->f_flags,
+							&fb->file->f_path,
+							fb->cred);
 	err = PTR_ERR(backing_file);
 	if (IS_ERR(backing_file)) {
 		fuse_backing_put(fb);

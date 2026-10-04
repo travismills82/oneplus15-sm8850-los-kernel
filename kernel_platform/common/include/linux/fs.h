@@ -2762,7 +2762,7 @@ struct file *dentry_open(const struct path *path, int flags,
 			 const struct cred *creds);
 struct file *dentry_create(const struct path *path, int flags, umode_t mode,
 			   const struct cred *cred);
-struct path *backing_file_user_path(const struct file *f);
+struct path *backing_file_user_path(struct file *f);
 
 #ifdef CONFIG_SECURITY
 void *backing_file_security(const struct file *f);
@@ -2790,14 +2790,14 @@ static inline void backing_file_set_security(struct file *f, void *security)
 static inline const struct path *file_user_path(const struct file *f)
 {
 	if (unlikely(f->f_mode & FMODE_BACKING))
-		return backing_file_user_path(f);
+		return backing_file_user_path((struct file *)f);
 	return &f->f_path;
 }
 /* Get the inode whose inode number to display in /proc/<pid>/maps */
 static inline const struct inode *file_user_inode(const struct file *f)
 {
 	if (unlikely(f->f_mode & FMODE_BACKING))
-		return d_inode(backing_file_user_path(f)->dentry);
+		return d_inode(backing_file_user_path((struct file *)f)->dentry);
 	return file_inode(f);
 }
 

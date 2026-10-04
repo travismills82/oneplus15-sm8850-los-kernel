@@ -1756,7 +1756,7 @@ static int __file_has_perm(const struct cred *cred, const struct file *file,
 			return -EIO;
 
 		bfsec = selinux_backing_file(file);
-		path = backing_file_user_path(file);
+		path = backing_file_user_path((struct file *)file);
 		tsid_fd = bfsec->uf_sid;
 		inode = d_inode(path->dentry);
 
@@ -3711,7 +3711,8 @@ static int selinux_backing_file_alloc(struct file *backing_file,
 	struct backing_file_security_struct *bfsec;
 
 	bfsec = selinux_backing_file(backing_file);
-	bfsec->uf_sid = selinux_file(user_file)->sid;
+	/* Legacy KMI callers only provide the original user path. */
+	bfsec->uf_sid = user_file ? selinux_file(user_file)->sid : current_sid();
 
 	return 0;
 }
@@ -3843,7 +3844,7 @@ static int __file_map_prot_check(const struct cred *cred,
 
 	if (file) {
 		if (bf_user_file)
-			inode = d_inode(backing_file_user_path(file)->dentry);
+			inode = d_inode(backing_file_user_path((struct file *)file)->dentry);
 		else
 			inode = file_inode(file);
 	}

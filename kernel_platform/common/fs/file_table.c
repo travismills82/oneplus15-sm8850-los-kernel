@@ -54,7 +54,7 @@ struct backing_file {
 
 #define backing_file(f) container_of(f, struct backing_file, file)
 
-struct path *backing_file_user_path(const struct file *f)
+struct path *backing_file_user_path(struct file *f)
 {
 	return &backing_file(f)->user_path;
 }
@@ -65,6 +65,13 @@ void backing_file_set_user_path(struct file *f, const struct path *path)
 	backing_file(f)->user_path = *path;
 }
 EXPORT_SYMBOL_GPL(backing_file_set_user_path);
+
+int backing_file_mmap_security(struct vm_area_struct *vma,
+			       struct file *backing_file,
+			       struct file *user_file)
+{
+	return security_mmap_backing_file(vma, backing_file, user_file);
+}
 
 #ifdef CONFIG_SECURITY
 void *backing_file_security(const struct file *f)
