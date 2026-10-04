@@ -333,6 +333,8 @@ int __v4l2_async_register_subdev(struct v4l2_subdev *sd, struct module *module);
  * An error is returned if the module is no longer loaded on any attempts
  * to register it.
  */
+int __must_check
+v4l2_async_register_subdev_sensor(struct v4l2_subdev *sd);
 #define v4l2_async_register_subdev_sensor(sd) \
 	__v4l2_async_register_subdev_sensor(sd, THIS_MODULE)
 int __must_check

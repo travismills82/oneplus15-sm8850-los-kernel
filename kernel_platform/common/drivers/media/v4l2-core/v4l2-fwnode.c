@@ -1251,6 +1251,20 @@ out_cleanup:
 }
 EXPORT_SYMBOL_GPL(__v4l2_async_register_subdev_sensor);
 
+/*
+ * Keep the pre-6.12.101 KMI entry point for already-built modules.  New
+ * source callers use the header macro above and pass THIS_MODULE explicitly.
+ * A legacy caller can only provide the owner stored in the subdev itself;
+ * unlike the old implementation, do not overwrite that owner with the
+ * v4l2-fwnode module (or NULL when v4l2-fwnode is built in).
+ */
+#undef v4l2_async_register_subdev_sensor
+int v4l2_async_register_subdev_sensor(struct v4l2_subdev *sd)
+{
+	return __v4l2_async_register_subdev_sensor(sd, sd->owner);
+}
+EXPORT_SYMBOL_GPL(v4l2_async_register_subdev_sensor);
+
 MODULE_DESCRIPTION("V4L2 fwnode binding parsing library");
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Sakari Ailus <sakari.ailus@linux.intel.com>");
