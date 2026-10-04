@@ -410,7 +410,8 @@ static void kvm_arm_smmu_release_device(struct device *dev)
 }
 
 static int kvm_arm_smmu_set_dev_pasid(struct iommu_domain *domain,
-				      struct device *dev, ioasid_t pasid)
+				      struct device *dev, ioasid_t pasid,
+				      struct iommu_domain *old)
 {
 	int i, ret;
 	struct arm_smmu_device *smmu;
@@ -463,7 +464,7 @@ static int kvm_arm_smmu_attach_dev(struct iommu_domain *domain,
 	if (xa_find_after(&master->domains, &pasid, ULONG_MAX, XA_PRESENT))
 		return -EBUSY;
 
-	return kvm_arm_smmu_set_dev_pasid(domain, dev, 0);
+	return kvm_arm_smmu_set_dev_pasid(domain, dev, 0, NULL);
 }
 
 static int kvm_arm_smmu_def_domain_type(struct device *dev)

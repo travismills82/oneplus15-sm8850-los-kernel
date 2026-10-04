@@ -237,7 +237,8 @@ static void pviommu_detach_dev(struct pviommu_master *master)
 }
 
 static int pviommu_set_dev_pasid(struct iommu_domain *domain,
-				 struct device *dev, ioasid_t pasid)
+				 struct device *dev, ioasid_t pasid,
+				 struct iommu_domain *old)
 {
 	int ret = 0, i;
 	struct arm_smccc_res res;
@@ -281,7 +282,7 @@ static int pviommu_set_dev_pasid(struct iommu_domain *domain,
 
 static int pviommu_attach_dev(struct iommu_domain *domain, struct device *dev)
 {
-	return pviommu_set_dev_pasid(domain, dev, 0);
+	return pviommu_set_dev_pasid(domain, dev, 0, NULL);
 }
 
 static struct iommu_domain *pviommu_domain_alloc(unsigned int type)
