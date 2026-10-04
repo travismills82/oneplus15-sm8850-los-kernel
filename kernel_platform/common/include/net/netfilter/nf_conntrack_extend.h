@@ -38,6 +38,12 @@ enum nf_ct_ext_id {
 struct nf_ct_ext {
 	u8 offset[NF_CT_EXT_NUM];
 	u8 len;
+	/*
+	 * Preserve the OOS .601 module-visible layout.  The generation-ID
+	 * mechanism is intentionally retired; zero means that legacy inline
+	 * readers may use the extension without a generation check.
+	 */
+	unsigned int gen_id;
 	char data[] __aligned(8);
 };
 
