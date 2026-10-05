@@ -1524,7 +1524,6 @@ struct xhci_hcd {
 	/* imod_interval in ns (I * 250ns) */
 	u32		imod_interval;
 	u32		page_size;
-	unsigned int	dma_mask_bits;
 	/* MSI-X/MSI vectors */
 	int		nvecs;
 	/* optional clocks */
@@ -1673,7 +1672,7 @@ struct xhci_hcd {
 
 	void			*dbc;
 
-	ANDROID_KABI_RESERVE(1);
+	ANDROID_KABI_USE(1, unsigned int dma_mask_bits);
 	ANDROID_KABI_RESERVE(2);
 	ANDROID_KABI_RESERVE(3);
 	ANDROID_KABI_RESERVE(4);
