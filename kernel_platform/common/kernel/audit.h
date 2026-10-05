@@ -11,6 +11,7 @@
 
 #include <linux/fs.h>
 #include <linux/audit.h>
+#include <linux/android_kabi.h>
 #include <linux/skbuff.h>
 #include <uapi/linux/mqueue.h>
 #include <linux/tty.h>
@@ -75,7 +76,7 @@ struct audit_names {
 	int			name_len;	/* number of chars to log */
 	bool			hidden;		/* don't log this record */
 
-	u64			ino;
+	ANDROID_KABI_REPLACE(unsigned long, ino, u64 ino);
 	dev_t			dev;
 	umode_t			mode;
 	kuid_t			uid;
