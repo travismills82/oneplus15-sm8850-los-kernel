@@ -3408,7 +3408,9 @@ struct drm_tile_group *drm_mode_get_tile_group(struct drm_device *dev,
 
 	mutex_lock(&dev->mode_config.idr_mutex);
 	idr_for_each_entry(&dev->mode_config.tile_idr, tg, id) {
-		if (!memcmp(tg->group_data, topology_id, sizeof(tg->group_data))) {
+		if (!memcmp(tg->group_data, topology_id,
+			    sizeof(tg->group_data)) &&
+		    tg->group_data_last == topology_id[8]) {
 			if (!kref_get_unless_zero(&tg->refcount))
 				tg = NULL;
 			mutex_unlock(&dev->mode_config.idr_mutex);
@@ -3443,6 +3445,7 @@ struct drm_tile_group *drm_mode_create_tile_group(struct drm_device *dev,
 
 	kref_init(&tg->refcount);
 	memcpy(tg->group_data, topology_id, sizeof(tg->group_data));
+	tg->group_data_last = topology_id[8];
 	tg->dev = dev;
 
 	mutex_lock(&dev->mode_config.idr_mutex);

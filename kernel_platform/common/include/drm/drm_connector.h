@@ -28,6 +28,7 @@
 #include <linux/ctype.h>
 #include <linux/hdmi.h>
 #include <linux/notifier.h>
+#include <linux/android_kabi.h>
 #include <drm/drm_mode_object.h>
 #include <drm/drm_util.h>
 #include <drm/drm_property.h>
@@ -2312,7 +2313,8 @@ struct drm_tile_group {
 	struct kref refcount;
 	struct drm_device *dev;
 	int id;
-	u8 group_data[9];
+	u8 group_data[8];
+	ANDROID_KABI_IGNORE(1, u8 group_data_last);
 };
 
 struct drm_tile_group *drm_mode_create_tile_group(struct drm_device *dev,
