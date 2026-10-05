@@ -28,6 +28,8 @@ struct xdp_buff_xsk {
 	dma_addr_t dma;
 	dma_addr_t frame_dma;
 	struct xsk_buff_pool *pool;
+	/* Retained for the OOS stock-module ABI; runtime code no longer uses it. */
+	u64 orig_addr;
 	struct list_head free_list_node;
 	struct list_head xskb_list_node;
 };
