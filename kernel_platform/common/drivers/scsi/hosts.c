@@ -343,7 +343,8 @@ static void scsi_host_dev_release(struct device *dev)
 	/* Wait for functions invoked through call_rcu(&scmd->rcu, ...) */
 	rcu_barrier();
 
-	cancel_work_sync(&shost->eh_work);
+	if (shost->eh_work)
+		cancel_work_sync(&shost->eh_work->work);
 	if (shost->tmf_work_q)
 		destroy_workqueue(shost->tmf_work_q);
 	if (shost->ehandler)
@@ -369,6 +370,7 @@ static void scsi_host_dev_release(struct device *dev)
 
 	if (shost->shost_state != SHOST_CREATED)
 		put_device(parent);
+	kfree(shost->eh_work);
 	kfree(shost);
 }
 
@@ -398,6 +400,12 @@ struct Scsi_Host *scsi_host_alloc(const struct scsi_host_template *sht, int priv
 	shost = kzalloc(sizeof(struct Scsi_Host) + privsize, GFP_KERNEL);
 	if (!shost)
 		return NULL;
+	shost->eh_work = kzalloc(sizeof(*shost->eh_work), GFP_KERNEL);
+	if (!shost->eh_work) {
+		kfree(shost);
+		return NULL;
+	}
+	shost->eh_work->shost = shost;
 
 	shost->host_lock = &shost->default_lock;
 	spin_lock_init(shost->host_lock);
@@ -409,10 +417,11 @@ struct Scsi_Host *scsi_host_alloc(const struct scsi_host_template *sht, int priv
 	INIT_LIST_HEAD(&shost->starved_list);
 	init_waitqueue_head(&shost->host_wait);
 	mutex_init(&shost->scan_mutex);
-	INIT_WORK(&shost->eh_work, scsi_rcu_eh_wakeup);
+	INIT_WORK(&shost->eh_work->work, scsi_rcu_eh_wakeup);
 
 	index = ida_alloc(&host_index_ida, GFP_KERNEL);
 	if (index < 0) {
+		kfree(shost->eh_work);
 		kfree(shost);
 		return NULL;
 	}

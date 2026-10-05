@@ -5,6 +5,7 @@
 #include <linux/device.h>
 #include <scsi/scsi_device.h>
 #include <linux/sbitmap.h>
+#include <linux/workqueue.h>
 
 struct bsg_device;
 struct request_queue;
@@ -15,6 +16,11 @@ struct scsi_target;
 struct scsi_host_template;
 struct Scsi_Host;
 struct scsi_nl_hdr;
+
+struct scsi_eh_wakeup_work {
+	struct work_struct work;
+	struct Scsi_Host *shost;
+};
 
 #define SCSI_CMD_RETRIES_NO_LIMIT -1
 

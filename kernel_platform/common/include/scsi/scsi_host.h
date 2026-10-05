@@ -17,6 +17,7 @@ struct completion;
 struct module;
 struct scsi_cmnd;
 struct scsi_device;
+struct scsi_eh_wakeup_work;
 struct scsi_target;
 struct Scsi_Host;
 struct scsi_transport_template;
@@ -744,13 +745,11 @@ struct Scsi_Host {
 	 */
 	struct device *dma_dev;
 
-	/* Used for an rcu-synchronizing eh wakeup */
-	struct work_struct eh_work;
-
 	/* Delay for runtime autosuspend */
 	int rpm_autosuspend_delay;
 
-	ANDROID_KABI_RESERVE(1);
+	/* Used for an rcu-synchronizing eh wakeup */
+	ANDROID_KABI_USE(1, struct scsi_eh_wakeup_work *eh_work);
 
 	/*
 	 * We should ensure that this is aligned, both for better performance
