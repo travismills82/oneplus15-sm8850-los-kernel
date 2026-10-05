@@ -18,6 +18,7 @@
 #include <linux/fs.h>
 #include <linux/pagemap.h>
 #include <linux/uio.h>
+#include <linux/android_kabi.h>
 
 enum netfs_sreq_ref_trace;
 typedef struct mempool_s mempool_t;
@@ -265,7 +266,8 @@ struct netfs_io_request {
 	atomic64_t		issued_to;	/* Write issuer folio cursor */
 	unsigned long long	collected_to;	/* Point we've collected to */
 	unsigned long long	cleaned_to;	/* Position we've cleaned folios to */
-	const struct folio	*no_unlock_folio; /* Don't unlock this folio after read */
+	ANDROID_KABI_REPLACE(pgoff_t, no_unlock_folio,
+			     const struct folio *no_unlock_folio);
 	size_t			prev_donated;	/* Fallback for subreq->prev_donated */
 	refcount_t		ref;
 	unsigned long		flags;

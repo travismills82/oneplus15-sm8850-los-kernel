@@ -327,6 +327,8 @@ void *trace_event_buffer_reserve(struct trace_event_buffer *fbuffer,
 void trace_event_buffer_commit(struct trace_event_buffer *fbuffer);
 
 enum {
+	/* Keep the retired bit reserved for the frozen module flag ABI. */
+	TRACE_EVENT_FL_FILTERED_BIT,
 	TRACE_EVENT_FL_CAP_ANY_BIT,
 	TRACE_EVENT_FL_NO_SET_FILTER_BIT,
 	TRACE_EVENT_FL_IGNORE_ENABLE_BIT,
@@ -357,6 +359,8 @@ enum {
  *  TEST_STR      - The event has a "%s" that points to a string outside the event
  */
 enum {
+	/* Source compatibility only; the removed filter logic stays removed. */
+	TRACE_EVENT_FL_FILTERED		= (1 << TRACE_EVENT_FL_FILTERED_BIT),
 	TRACE_EVENT_FL_CAP_ANY		= (1 << TRACE_EVENT_FL_CAP_ANY_BIT),
 	TRACE_EVENT_FL_NO_SET_FILTER	= (1 << TRACE_EVENT_FL_NO_SET_FILTER_BIT),
 	TRACE_EVENT_FL_IGNORE_ENABLE	= (1 << TRACE_EVENT_FL_IGNORE_ENABLE_BIT),
@@ -382,6 +386,8 @@ struct trace_event_call {
 	};
 	struct trace_event	event;
 	char			*print_fmt;
+	/* Retain the frozen module-visible layout after filter logic removal. */
+	struct event_filter	*filter;
 	/*
 	 * Static events can disappear with modules,
 	 * where as dynamic ones need their own ref count.

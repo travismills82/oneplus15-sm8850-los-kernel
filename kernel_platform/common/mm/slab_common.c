@@ -6,6 +6,7 @@
  */
 #include <linux/slab.h>
 
+#include <linux/android_kabi.h>
 #include <linux/mm.h>
 #include <linux/poison.h>
 #include <linux/interrupt.h>
@@ -692,6 +693,14 @@ static struct kmem_cache *__init create_kmalloc_cache(const char *name,
 
 kmem_buckets kmalloc_caches[NR_KMALLOC_TYPES] __ro_after_init =
 { /* initialization for https://llvm.org/pr42570 */ };
+/*
+ * KMALLOC_NO_OBJ_EXT appends a fourth cache class without changing the
+ * address or representation of the three classes visible to frozen OOS
+ * 16.0.10.601 modules.  Preserve that legacy prefix for symbol versioning;
+ * the fourth class remains present and active at runtime.
+ */
+ANDROID_KABI_TYPE_STRING("kmalloc_caches",
+			 "variable array_type[3] { t#kmem_buckets }");
 EXPORT_SYMBOL(kmalloc_caches);
 
 #ifdef CONFIG_RANDOM_KMALLOC_CACHES

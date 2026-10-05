@@ -260,7 +260,7 @@ void fqdir_exit(struct fqdir *fqdir)
 }
 EXPORT_SYMBOL(fqdir_exit);
 
-void inet_frag_kill(struct inet_frag_queue *fq, int *refs)
+void inet_frag_kill_deferred(struct inet_frag_queue *fq, int *refs)
 {
 	if (del_timer(&fq->timer))
 		(*refs)++;
@@ -284,6 +284,21 @@ void inet_frag_kill(struct inet_frag_queue *fq, int *refs)
 		}
 		rcu_read_unlock();
 	}
+}
+EXPORT_SYMBOL(inet_frag_kill_deferred);
+
+/*
+ * OOS 16.0.10.601 modules use the original one-argument interface and own a
+ * reference while calling it.  Preserve that contract without reverting the
+ * deferred-refcount implementation used by current in-tree callers.
+ */
+void inet_frag_kill(struct inet_frag_queue *fq)
+{
+	int refs = 0;
+
+	inet_frag_kill_deferred(fq, &refs);
+	while (refs--)
+		refcount_dec(&fq->refcnt);
 }
 EXPORT_SYMBOL(inet_frag_kill);
 

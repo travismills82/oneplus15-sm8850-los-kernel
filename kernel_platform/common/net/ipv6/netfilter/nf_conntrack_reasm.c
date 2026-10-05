@@ -226,7 +226,7 @@ static int nf_ct_frag6_queue(struct frag_queue *fq, struct sk_buff *skb,
 			 * this case. -DaveM
 			 */
 			pr_debug("end of fragment not rounded to 8 bytes.\n");
-			inet_frag_kill(&fq->q, refs);
+			inet_frag_kill_deferred(&fq->q, refs);
 			return -EPROTO;
 		}
 		if (end > fq->q.len) {
@@ -306,7 +306,7 @@ static int nf_ct_frag6_queue(struct frag_queue *fq, struct sk_buff *skb,
 	return -EINPROGRESS;
 
 insert_error:
-	inet_frag_kill(&fq->q, refs);
+	inet_frag_kill_deferred(&fq->q, refs);
 err:
 	skb_dst_drop(skb);
 	return -EINVAL;
@@ -327,7 +327,7 @@ static int nf_ct_frag6_reasm(struct frag_queue *fq, struct sk_buff *skb,
 	int payload_len;
 	u8 ecn;
 
-	inet_frag_kill(&fq->q, refs);
+	inet_frag_kill_deferred(&fq->q, refs);
 
 	ecn = ip_frag_ecn_table[fq->ecn];
 	if (unlikely(ecn == 0xff))
@@ -379,7 +379,7 @@ static int nf_ct_frag6_reasm(struct frag_queue *fq, struct sk_buff *skb,
 	return 0;
 
 err:
-	inet_frag_kill(&fq->q, refs);
+	inet_frag_kill_deferred(&fq->q, refs);
 	return -EINVAL;
 }
 

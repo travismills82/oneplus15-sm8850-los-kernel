@@ -242,7 +242,7 @@ insert_error:
 	__IP6_INC_STATS(net, ip6_dst_idev(skb_dst(skb)),
 			IPSTATS_MIB_REASM_OVERLAPS);
 discard_fq:
-	inet_frag_kill(&fq->q, refs);
+	inet_frag_kill_deferred(&fq->q, refs);
 	__IP6_INC_STATS(net, ip6_dst_idev(skb_dst(skb)),
 			IPSTATS_MIB_REASMFAILS);
 err:
@@ -267,7 +267,7 @@ static int ip6_frag_reasm(struct frag_queue *fq, struct sk_buff *skb,
 	int payload_len;
 	u8 ecn;
 
-	inet_frag_kill(&fq->q, refs);
+	inet_frag_kill_deferred(&fq->q, refs);
 
 	ecn = ip_frag_ecn_table[fq->ecn];
 	if (unlikely(ecn == 0xff))
@@ -321,7 +321,7 @@ out_oom:
 	net_dbg_ratelimited("ip6_frag_reasm: no memory for reassembly\n");
 out_fail:
 	__IP6_INC_STATS(net, __in6_dev_stats_get(dev, skb), IPSTATS_MIB_REASMFAILS);
-	inet_frag_kill(&fq->q, refs);
+	inet_frag_kill_deferred(&fq->q, refs);
 	return -1;
 }
 

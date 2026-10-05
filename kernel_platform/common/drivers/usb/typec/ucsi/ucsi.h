@@ -4,6 +4,7 @@
 #define __DRIVER_USB_TYPEC_UCSI_H
 
 #include <linux/bitops.h>
+#include <linux/android_kabi.h>
 #include <linux/completion.h>
 #include <linux/device.h>
 #include <linux/power_supply.h>
@@ -422,8 +423,9 @@ struct ucsi_connector {
 
 	struct ucsi *ucsi;
 	struct mutex lock; /* port lock */
-	struct lock_class_key lock_key;
-	struct work_struct work;
+	ANDROID_KABI_REPLACE(struct work_struct, work,
+			     struct lock_class_key lock_key;
+			     struct work_struct work);
 	struct completion complete;
 	struct workqueue_struct *wq;
 	struct list_head partner_tasks;

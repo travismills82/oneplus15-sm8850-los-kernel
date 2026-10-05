@@ -141,7 +141,7 @@ static void ip_expire(struct timer_list *t)
 		goto out;
 
 	qp->q.flags |= INET_FRAG_DROP;
-	inet_frag_kill(&qp->q, &refs);
+	inet_frag_kill_deferred(&qp->q, &refs);
 
 	/* Paired with WRITE_ONCE() in fqdir_pre_exit(). */
 	if (READ_ONCE(qp->q.fqdir->dead)) {
@@ -279,7 +279,7 @@ static int ip_frag_queue(struct ipq *qp, struct sk_buff *skb, int *refs)
 	if (!(IPCB(skb)->flags & IPSKB_FRAG_COMPLETE) &&
 	    unlikely(ip_frag_too_far(qp)) &&
 	    unlikely(err = ip_frag_reinit(qp))) {
-		inet_frag_kill(&qp->q, refs);
+		inet_frag_kill_deferred(&qp->q, refs);
 		goto err;
 	}
 
@@ -368,7 +368,7 @@ static int ip_frag_queue(struct ipq *qp, struct sk_buff *skb, int *refs)
 		err = ip_frag_reasm(qp, skb, prev_tail, dev, refs);
 		skb->_skb_refdst = orefdst;
 		if (err)
-			inet_frag_kill(&qp->q, refs);
+			inet_frag_kill_deferred(&qp->q, refs);
 		return err;
 	}
 
@@ -385,7 +385,7 @@ insert_error:
 	err = -EINVAL;
 	__IP_INC_STATS(net, IPSTATS_MIB_REASM_OVERLAPS);
 discard_qp:
-	inet_frag_kill(&qp->q, refs);
+	inet_frag_kill_deferred(&qp->q, refs);
 	__IP_INC_STATS(net, IPSTATS_MIB_REASMFAILS);
 err:
 	kfree_skb_reason(skb, reason);
@@ -408,7 +408,7 @@ static int ip_frag_reasm(struct ipq *qp, struct sk_buff *skb,
 	int len, err;
 	u8 ecn;
 
-	inet_frag_kill(&qp->q, refs);
+	inet_frag_kill_deferred(&qp->q, refs);
 
 	ecn = ip_frag_ecn_table[qp->ecn];
 	if (unlikely(ecn == 0xff)) {

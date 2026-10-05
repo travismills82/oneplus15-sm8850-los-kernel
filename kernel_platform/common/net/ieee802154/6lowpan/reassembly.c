@@ -55,7 +55,7 @@ static void lowpan_frag_expire(struct timer_list *t)
 	if (fq->q.flags & INET_FRAG_COMPLETE)
 		goto out;
 
-	inet_frag_kill(&fq->q, &refs);
+	inet_frag_kill_deferred(&fq->q, &refs);
 out:
 	spin_unlock(&fq->q.lock);
 	inet_frag_putn(&fq->q, refs);
@@ -170,7 +170,7 @@ static int lowpan_frag_reasm(struct lowpan_frag_queue *fq, struct sk_buff *skb,
 {
 	void *reasm_data;
 
-	inet_frag_kill(&fq->q, refs);
+	inet_frag_kill_deferred(&fq->q, refs);
 
 	reasm_data = inet_frag_reasm_prepare(&fq->q, skb, prev_tail);
 	if (!reasm_data)

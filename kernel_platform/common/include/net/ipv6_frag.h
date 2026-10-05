@@ -75,7 +75,7 @@ ip6frag_expire_frag_queue(struct net *net, struct frag_queue *fq)
 		goto out;
 
 	fq->q.flags |= INET_FRAG_DROP;
-	inet_frag_kill(&fq->q, &refs);
+	inet_frag_kill_deferred(&fq->q, &refs);
 
 	/* Paired with the WRITE_ONCE() in fqdir_pre_exit(). */
 	if (READ_ONCE(fq->q.fqdir->dead)) {

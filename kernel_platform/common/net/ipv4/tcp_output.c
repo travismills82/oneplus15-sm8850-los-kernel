@@ -4260,7 +4260,7 @@ void tcp_send_delayed_ack(struct sock *sk)
 }
 
 /* This routine sends an ack and also updates the window. */
-void __tcp_send_ack(struct sock *sk, u32 rcv_nxt, u16 flags)
+void __tcp_send_ack_flags(struct sock *sk, u32 rcv_nxt, u16 flags)
 {
 	struct sk_buff *buff;
 
@@ -4300,11 +4300,20 @@ void __tcp_send_ack(struct sock *sk, u32 rcv_nxt, u16 flags)
 	/* Send it off, this clears delayed acks for us. */
 	__tcp_transmit_skb(sk, buff, 0, (__force gfp_t)0, rcv_nxt);
 }
+
+/*
+ * Preserve the frozen OOS 16.0.10.601 module ABI while keeping the newer
+ * flag-aware implementation available to in-tree callers.
+ */
+void __tcp_send_ack(struct sock *sk, u32 rcv_nxt)
+{
+	__tcp_send_ack_flags(sk, rcv_nxt, 0);
+}
 EXPORT_SYMBOL_GPL(__tcp_send_ack);
 
 void tcp_send_ack(struct sock *sk)
 {
-	__tcp_send_ack(sk, tcp_sk(sk)->rcv_nxt, 0);
+	__tcp_send_ack_flags(sk, tcp_sk(sk)->rcv_nxt, 0);
 }
 
 /* This routine sends a packet with an out of date sequence
