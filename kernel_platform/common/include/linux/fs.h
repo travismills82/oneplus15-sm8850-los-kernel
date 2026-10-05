@@ -171,20 +171,20 @@ typedef int (dio_iodone_t)(struct kiocb *iocb, loff_t offset,
 
 #define	FMODE_NOREUSE		((__force fmode_t)(1 << 23))
 
+/*
+ * Suppress permission fsnotify events.  Use the previously unused bit 24 so
+ * the Android/OEM-visible FMODE_BACKING and FMODE_NONOTIFY values stay stable.
+ */
+#define FMODE_NONOTIFY_PERM	((__force fmode_t)(1 << 24))
+
 /* File is embedded in backing_file object */
-#define FMODE_BACKING		((__force fmode_t)(1 << 24))
+#define FMODE_BACKING		((__force fmode_t)(1 << 25))
 
 /*
  * Together with FMODE_NONOTIFY_PERM defines which fsnotify events shouldn't be
  * generated (see below)
  */
-#define FMODE_NONOTIFY		((__force fmode_t)(1 << 25))
-
-/*
- * Together with FMODE_NONOTIFY defines which fsnotify events shouldn't be
- * generated (see below)
- */
-#define FMODE_NONOTIFY_PERM	((__force fmode_t)(1 << 26))
+#define FMODE_NONOTIFY		((__force fmode_t)(1 << 26))
 
 /* File is capable of returning -EAGAIN if I/O will block */
 #define FMODE_NOWAIT		((__force fmode_t)(1 << 27))
