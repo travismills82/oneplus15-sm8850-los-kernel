@@ -143,18 +143,26 @@ struct tmpmasks {
 	cpumask_var_t new_cpus;		/* For update_cpumasks_hier() */
 };
 
+static inline atomic_t *cpuset_deadline_tasks(struct cpuset *cs)
+{
+	BUILD_BUG_ON(sizeof(cs->nr_deadline_tasks) != sizeof(atomic_t));
+	BUILD_BUG_ON(__alignof__(cs->nr_deadline_tasks) != __alignof__(atomic_t));
+
+	return (atomic_t *)&cs->nr_deadline_tasks;
+}
+
 void inc_dl_tasks_cs(struct task_struct *p)
 {
 	struct cpuset *cs = task_cs(p);
 
-	atomic_inc(&cs->nr_deadline_tasks);
+	atomic_inc(cpuset_deadline_tasks(cs));
 }
 
 void dec_dl_tasks_cs(struct task_struct *p)
 {
 	struct cpuset *cs = task_cs(p);
 
-	atomic_dec(&cs->nr_deadline_tasks);
+	atomic_dec(cpuset_deadline_tasks(cs));
 }
 
 static inline int is_partition_valid(const struct cpuset *cs)
@@ -958,7 +966,7 @@ static void dl_update_tasks_root_domain(struct cpuset *cs)
 	struct css_task_iter it;
 	struct task_struct *task;
 
-	if (atomic_read(&cs->nr_deadline_tasks) == 0)
+	if (atomic_read(cpuset_deadline_tasks(cs)) == 0)
 		return;
 
 	css_task_iter_start(&cs->css, 0, &it);
@@ -3192,8 +3200,9 @@ out:
 	cs->old_mems_allowed = cpuset_attach_nodemask_to;
 
 	if (cs->nr_migrate_dl_tasks) {
-		atomic_add(cs->nr_migrate_dl_tasks, &cs->nr_deadline_tasks);
-		atomic_sub(cs->nr_migrate_dl_tasks, &oldcs->nr_deadline_tasks);
+		atomic_add(cs->nr_migrate_dl_tasks, cpuset_deadline_tasks(cs));
+		atomic_sub(cs->nr_migrate_dl_tasks,
+			   cpuset_deadline_tasks(oldcs));
 		reset_migrate_dl_data(cs);
 	}
 
