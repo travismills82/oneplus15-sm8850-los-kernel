@@ -89,8 +89,9 @@ struct pci_slot {
 	struct pci_bus		*bus;		/* Bus this slot is on */
 	struct list_head	list;		/* Node in list of slots */
 	struct hotplug_slot	*hotplug;	/* Hotplug info (move here) */
-	u16			number;		/* Device nr, or PCI_SLOT_ALL_DEVICES */
-	unsigned int		per_func_slot:1; /* Allow per function slot */
+	unsigned char		number;		/* Legacy device nr exposed to modules */
+	ANDROID_KABI_IGNORE(1, u16 number_ext);
+	ANDROID_KABI_IGNORE(2, bool per_func_slot);
 	struct kobject		kobj;
 };
 

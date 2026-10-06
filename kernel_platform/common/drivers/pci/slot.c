@@ -38,7 +38,7 @@ static const struct sysfs_ops pci_slot_sysfs_ops = {
 
 static ssize_t address_read_file(struct pci_slot *slot, char *buf)
 {
-	if (slot->number == PCI_SLOT_PLACEHOLDER)
+	if (slot->number_ext == PCI_SLOT_PLACEHOLDER)
 		return sysfs_emit(buf, "%04x:%02x\n",
 				  pci_domain_nr(slot->bus),
 				  slot->bus->number);
@@ -47,7 +47,7 @@ static ssize_t address_read_file(struct pci_slot *slot, char *buf)
 	 * Preserve legacy ABI expectations that hotplug drivers that manage
 	 * multiple devices per slot emit 0 for the device number.
 	 */
-	if (slot->number == PCI_SLOT_ALL_DEVICES)
+	if (slot->number_ext == PCI_SLOT_ALL_DEVICES)
 		return sysfs_emit(buf, "%04x:%02x:00\n",
 				  pci_domain_nr(slot->bus),
 				  slot->bus->number);
@@ -55,7 +55,7 @@ static ssize_t address_read_file(struct pci_slot *slot, char *buf)
 	return sysfs_emit(buf, "%04x:%02x:%02x\n",
 			  pci_domain_nr(slot->bus),
 			  slot->bus->number,
-			  slot->number);
+			  slot->number_ext);
 }
 
 static ssize_t bus_speed_read(enum pci_bus_speed speed, char *buf)
@@ -76,10 +76,10 @@ static ssize_t cur_speed_read_file(struct pci_slot *slot, char *buf)
 static bool pci_dev_matches_slot(struct pci_dev *dev, struct pci_slot *slot)
 {
 	if (slot->per_func_slot)
-		return dev->devfn == slot->number;
+		return dev->devfn == slot->number_ext;
 
-	return slot->number == PCI_SLOT_ALL_DEVICES ||
-		PCI_SLOT(dev->devfn) == slot->number;
+	return slot->number_ext == PCI_SLOT_ALL_DEVICES ||
+		PCI_SLOT(dev->devfn) == slot->number_ext;
 }
 
 static bool pci_slot_enabled_per_func(void)
@@ -96,7 +96,7 @@ static void pci_slot_release(struct kobject *kobj)
 	struct pci_slot *slot = to_pci_slot(kobj);
 
 	dev_dbg(&slot->bus->dev, "dev %02x, released physical slot %s\n",
-		slot->number, pci_slot_name(slot));
+		slot->number_ext, pci_slot_name(slot));
 
 	down_read(&pci_bus_sem);
 	list_for_each_entry(dev, &slot->bus->devices, bus_list)
@@ -204,7 +204,7 @@ static struct pci_slot *get_slot(struct pci_bus *parent, int slot_nr)
 
 	/* We already hold pci_slot_mutex */
 	list_for_each_entry(slot, &parent->slots, list)
-		if (slot->number == slot_nr) {
+		if (slot->number_ext == slot_nr) {
 			kobject_get(&slot->kobj);
 			return slot;
 		}
@@ -301,7 +301,13 @@ placeholder:
 	}
 
 	slot->bus = pci_bus_get(parent);
-	slot->number = slot_nr;
+	slot->number_ext = slot_nr;
+	if (slot_nr == PCI_SLOT_ALL_DEVICES)
+		slot->number = 0xfe;
+	else if (slot_nr == PCI_SLOT_PLACEHOLDER)
+		slot->number = 0xff;
+	else
+		slot->number = slot_nr;
 
 	if (pci_slot_enabled_per_func())
 		slot->per_func_slot = 1;
@@ -356,7 +362,7 @@ EXPORT_SYMBOL_GPL(pci_create_slot);
 void pci_destroy_slot(struct pci_slot *slot)
 {
 	dev_dbg(&slot->bus->dev, "dev %02x, dec refcount to %d\n",
-		slot->number, kref_read(&slot->kobj.kref) - 1);
+		slot->number_ext, kref_read(&slot->kobj.kref) - 1);
 
 	mutex_lock(&pci_slot_mutex);
 	kobject_put(&slot->kobj);
