@@ -635,7 +635,7 @@ static void xhci_debugfs_create_ports(struct xhci_hcd *xhci,
 
 	parent = debugfs_create_dir("ports", parent);
 
-	for (int i = 0; i < xhci->max_ports; i++) {
+	for (int i = 0; i < HCS_MAX_PORTS(xhci->hcs_params1); i++) {
 		scnprintf(port_name, sizeof(port_name), "port%02d", i + 1);
 		dir = debugfs_create_dir(port_name, parent);
 		port = &xhci->hw_ports[i];

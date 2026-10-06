@@ -1342,7 +1342,7 @@ void xhci_hc_died(struct xhci_hcd *xhci)
 	xhci_cleanup_command_queue(xhci);
 
 	/* return any pending urbs, remove may be waiting for them */
-	for (i = 0; i <= xhci->max_slots; i++) {
+	for (i = 0; i <= HCS_MAX_SLOTS(xhci->hcs_params1); i++) {
 		if (!xhci->devs[i])
 			continue;
 		for (j = 0; j < 31; j++)
@@ -1984,7 +1984,8 @@ static void handle_port_status(struct xhci_hcd *xhci, union xhci_trb *event)
 
 	port_id = GET_PORT_ID(le32_to_cpu(event->generic.field[0]));
 
-	if ((port_id <= 0) || (port_id > xhci->max_ports)) {
+	if ((port_id <= 0) ||
+	    (port_id > HCS_MAX_PORTS(xhci->hcs_params1))) {
 		xhci_warn(xhci, "Port change event with invalid port ID %d\n",
 			  port_id);
 		return;
