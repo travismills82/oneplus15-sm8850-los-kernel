@@ -120,7 +120,7 @@ EXPORT_SYMBOL_GPL(plist_add);
  * @node:	&struct plist_node pointer - entry to be removed
  * @head:	&struct plist_head pointer - list head
  */
-void plist_del(struct plist_node *node, struct plist_head *head)
+noinline void plist_del(struct plist_node *node, struct plist_head *head)
 {
 	plist_check_head(head);
 
