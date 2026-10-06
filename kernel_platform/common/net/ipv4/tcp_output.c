@@ -3648,7 +3648,7 @@ void tcp_send_fin(struct sock *sk)
  * was unread data in the receive queue.  This behavior is recommended
  * by RFC 2525, section 2.17.  -DaveM
  */
-void tcp_send_active_reset(struct sock *sk, enum sk_rst_reason reason)
+void tcp_send_active_reset_reason(struct sock *sk, enum sk_rst_reason reason)
 {
 	gfp_t priority = sk_gfp_mask(sk, GFP_ATOMIC | __GFP_NOWARN);
 	struct sk_buff *skb;
@@ -3675,6 +3675,17 @@ void tcp_send_active_reset(struct sock *sk, enum sk_rst_reason reason)
 	 * skb here is different to the troublesome skb, so use NULL
 	 */
 	trace_tcp_send_reset(sk, NULL, reason);
+}
+
+void tcp_send_active_reset(struct sock *sk, gfp_t priority,
+			   enum sk_rst_reason reason)
+{
+	/*
+	 * Keep the frozen KMI entry point, but retain the stable fix by never
+	 * allowing a caller-supplied reclaimable allocation mask here.
+	 */
+	(void)priority;
+	tcp_send_active_reset_reason(sk, reason);
 }
 EXPORT_SYMBOL_GPL(tcp_send_active_reset);
 
