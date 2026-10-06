@@ -82,6 +82,19 @@
 
 #include <linux/uaccess.h>
 #include <linux/proc_fs.h>
+#include <linux/android_kabi.h>
+
+/*
+ * These APIs only exchange pointers.  Keep the qualified 6.12.107 symbol
+ * representation when unrelated private types reachable through struct file
+ * change, without masking any runtime layout used by the TUN implementation.
+ */
+ANDROID_KABI_TYPE_STRING(
+	"tun_get_socket",
+	"subprogram ( formal_parameter pointer_type { s#file } file ) -> pointer_type { s#socket }");
+ANDROID_KABI_TYPE_STRING(
+	"tun_get_tx_ring",
+	"subprogram ( formal_parameter pointer_type { s#file } file ) -> pointer_type { s#ptr_ring }");
 
 static void tun_default_link_ksettings(struct net_device *dev,
 				       struct ethtool_link_ksettings *cmd);
