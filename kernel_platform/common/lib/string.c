@@ -824,7 +824,9 @@ static void *check_bytes8(const u8 *start, u8 value, unsigned int bytes)
  * returns the address of the first character other than @c, or %NULL
  * if the whole buffer contains just @c.
  */
-noinline void *memchr_inv(const void *start, int c, size_t bytes)
+/* Keep split DWARF ranges from obscuring this exported function's ABI type. */
+__section(".text")
+void *memchr_inv(const void *start, int c, size_t bytes)
 {
 	u8 value = c;
 	u64 value64;

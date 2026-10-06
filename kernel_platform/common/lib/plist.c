@@ -120,7 +120,9 @@ EXPORT_SYMBOL_GPL(plist_add);
  * @node:	&struct plist_node pointer - entry to be removed
  * @head:	&struct plist_head pointer - list head
  */
-noinline void plist_del(struct plist_node *node, struct plist_head *head)
+/* Keep split DWARF ranges from obscuring this exported function's ABI type. */
+__section(".text")
+void plist_del(struct plist_node *node, struct plist_head *head)
 {
 	plist_check_head(head);
 
