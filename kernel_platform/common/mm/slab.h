@@ -12,7 +12,6 @@
 #include <linux/kfence.h>
 #include <linux/kasan.h>
 #include <linux/stackdepot.h>
-#include <linux/android_kabi.h>
 
 #undef CREATE_TRACE_POINTS
 #include <trace/hooks/mm.h>
