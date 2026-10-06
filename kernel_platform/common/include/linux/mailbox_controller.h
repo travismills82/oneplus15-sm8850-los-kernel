@@ -8,6 +8,7 @@
 #include <linux/hrtimer.h>
 #include <linux/device.h>
 #include <linux/completion.h>
+#include <linux/android_kabi.h>
 
 struct mbox_chan;
 
@@ -122,9 +123,9 @@ struct mbox_controller {
 struct mbox_chan {
 	struct mbox_controller *mbox;
 	unsigned txdone_method;
+	ANDROID_KABI_IGNORE(1, int tx_status);
 	struct mbox_client *cl;
 	struct completion tx_complete;
-	int tx_status;
 	void *active_req;
 	unsigned msg_count, msg_free;
 	void *msg_data[MBOX_TX_QUEUE_LEN];
