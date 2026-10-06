@@ -103,6 +103,7 @@ struct bpf_mem_cache {
 	bool draining;
 	struct bpf_mem_cache *tgt;
 	void (*dtor)(void *obj, void *ctx);
+	void (*dtor_ctx_free)(void *ctx);
 	void *dtor_ctx;
 
 	/* list of objects to be freed after RCU GP */
@@ -693,9 +694,20 @@ static void check_leaked_objs(struct bpf_mem_alloc *ma)
 
 static void free_mem_alloc_no_barrier(struct bpf_mem_alloc *ma)
 {
+	struct bpf_mem_cache *c = NULL;
+	int cpu;
+
+	for_each_possible_cpu(cpu) {
+		if (ma->cache)
+			c = per_cpu_ptr(ma->cache, cpu);
+		else if (ma->caches)
+			c = &per_cpu_ptr(ma->caches, cpu)->cache[0];
+		break;
+	}
+
 	/* We can free dtor ctx only once all callbacks are done using it. */
-	if (ma->dtor_ctx_free)
-		ma->dtor_ctx_free(ma->dtor_ctx);
+	if (c && c->dtor_ctx_free)
+		c->dtor_ctx_free(c->dtor_ctx);
 	check_leaked_objs(ma);
 	free_percpu(ma->cache);
 	free_percpu(ma->caches);
@@ -1038,13 +1050,11 @@ void bpf_mem_alloc_set_dtor(struct bpf_mem_alloc *ma, void (*dtor)(void *obj, vo
 	struct bpf_mem_cache *c;
 	int cpu, i;
 
-	ma->dtor_ctx_free = dtor_ctx_free;
-	ma->dtor_ctx = ctx;
-
 	if (ma->cache) {
 		for_each_possible_cpu(cpu) {
 			c = per_cpu_ptr(ma->cache, cpu);
 			c->dtor = dtor;
+			c->dtor_ctx_free = dtor_ctx_free;
 			c->dtor_ctx = ctx;
 		}
 	}
@@ -1054,6 +1064,7 @@ void bpf_mem_alloc_set_dtor(struct bpf_mem_alloc *ma, void (*dtor)(void *obj, vo
 			for (i = 0; i < NUM_CACHES; i++) {
 				c = &cc->cache[i];
 				c->dtor = dtor;
+				c->dtor_ctx_free = dtor_ctx_free;
 				c->dtor_ctx = ctx;
 			}
 		}
