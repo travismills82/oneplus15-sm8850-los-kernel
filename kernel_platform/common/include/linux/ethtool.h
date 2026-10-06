@@ -995,10 +995,9 @@ struct kernel_ethtool_ts_info {
  * of the generic netdev features interface.
  */
 struct ethtool_ops {
-	u32     supported_input_xfrm:8;
 	u32     cap_link_lanes_supported:1;
 	u32     cap_rss_ctx_supported:1;
-	u32	rxfh_per_ctx_fields:1;
+	u32	cap_rss_sym_xor_supported:1;
 	u32	rxfh_per_ctx_key:1;
 	u32	cap_rss_rxnfc_adds:1;
 	u32	rxfh_indir_space;
@@ -1067,11 +1066,6 @@ struct ethtool_ops {
 	int	(*get_rxfh)(struct net_device *, struct ethtool_rxfh_param *);
 	int	(*set_rxfh)(struct net_device *, struct ethtool_rxfh_param *,
 			    struct netlink_ext_ack *extack);
-	int	(*get_rxfh_fields)(struct net_device *,
-				   struct ethtool_rxfh_fields *);
-	int	(*set_rxfh_fields)(struct net_device *,
-				   const struct ethtool_rxfh_fields *,
-				   struct netlink_ext_ack *extack);
 	int	(*create_rxfh_context)(struct net_device *,
 				       struct ethtool_rxfh_context *ctx,
 				       const struct ethtool_rxfh_param *rxfh,
@@ -1149,9 +1143,15 @@ struct ethtool_ops {
 			  struct netlink_ext_ack *extack);
 	void	(*get_mm_stats)(struct net_device *dev, struct ethtool_mm_stats *stats);
 
-	ANDROID_KABI_RESERVE(1);
-	ANDROID_KABI_RESERVE(2);
-	ANDROID_KABI_RESERVE(3);
+	ANDROID_KABI_USE2(1, u32 supported_input_xfrm:8,
+			  u32 rxfh_per_ctx_fields:1);
+	ANDROID_KABI_USE(2,
+		int (*get_rxfh_fields)(struct net_device *,
+				       struct ethtool_rxfh_fields *));
+	ANDROID_KABI_USE(3,
+		int (*set_rxfh_fields)(struct net_device *,
+				       const struct ethtool_rxfh_fields *,
+				       struct netlink_ext_ack *extack));
 	ANDROID_KABI_RESERVE(4);
 };
 
