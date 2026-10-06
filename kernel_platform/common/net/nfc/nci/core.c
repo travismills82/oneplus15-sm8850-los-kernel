@@ -775,7 +775,7 @@ static int nci_set_local_general_bytes(struct nfc_dev *nfc_dev)
 	u8 gb[NFC_MAX_GT_LEN];
 	int rc;
 
-	nfc_get_local_general_bytes(nfc_dev, gb, sizeof(gb),
+	nfc_copy_local_general_bytes(nfc_dev, gb, sizeof(gb),
 				    &param.len);
 	if (param.len == 0)
 		return 0;

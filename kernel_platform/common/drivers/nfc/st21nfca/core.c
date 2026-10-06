@@ -351,7 +351,7 @@ static int st21nfca_hci_start_poll(struct nfc_hci_dev *hdev,
 			if (r < 0)
 				return r;
 		} else {
-			nfc_get_local_general_bytes(hdev->ndev, hdev->gb,
+			nfc_copy_local_general_bytes(hdev->ndev, hdev->gb,
 						    sizeof(hdev->gb),
 						    &hdev->gb_len);
 			if (hdev->gb_len == 0) {

@@ -1356,7 +1356,7 @@ static int pn533_poll_dep(struct nfc_dev *nfc_dev)
 	u8 passive_data[PASSIVE_DATA_LEN] = {0x00, 0xff, 0xff, 0x00, 0x3};
 
 	if (!dev->gb_len) {
-		nfc_get_local_general_bytes(nfc_dev, dev->gb,
+		nfc_copy_local_general_bytes(nfc_dev, dev->gb,
 					    sizeof(dev->gb),
 					    &dev->gb_len);
 		if (!dev->gb_len) {
@@ -1661,7 +1661,7 @@ static int pn533_start_poll(struct nfc_dev *nfc_dev,
 	}
 
 	if (tm_protocols) {
-		nfc_get_local_general_bytes(nfc_dev, dev->gb,
+		nfc_copy_local_general_bytes(nfc_dev, dev->gb,
 					    sizeof(dev->gb), &dev->gb_len);
 		if (dev->gb_len == 0)
 			tm_protocols = 0;

@@ -301,7 +301,7 @@ int nfc_dep_link_up(struct nfc_dev *dev, int target_index, u8 comm_mode)
 		goto error;
 	}
 
-	nfc_get_local_general_bytes(dev, gb, sizeof(gb), &gb_len);
+	nfc_copy_local_general_bytes(dev, gb, sizeof(gb), &gb_len);
 	if (gb_len > NFC_MAX_GT_LEN) {
 		rc = -EINVAL;
 		goto error;
@@ -644,10 +644,31 @@ int nfc_set_remote_general_bytes(struct nfc_dev *dev, const u8 *gb, u8 gb_len)
 }
 EXPORT_SYMBOL(nfc_set_remote_general_bytes);
 
-u8 *nfc_get_local_general_bytes(struct nfc_dev *dev, u8 *out_gb,
-				size_t gb_max_len, size_t *gb_len)
+u8 *nfc_copy_local_general_bytes(struct nfc_dev *dev, u8 *out_gb,
+				 size_t gb_max_len, size_t *gb_len)
 {
 	return nfc_llcp_general_bytes(dev, out_gb, gb_max_len, gb_len);
+}
+EXPORT_SYMBOL(nfc_copy_local_general_bytes);
+
+static DEFINE_MUTEX(nfc_legacy_gb_lock);
+static u8 nfc_legacy_gb[NFC_MAX_GT_LEN];
+
+u8 *nfc_get_local_general_bytes(struct nfc_dev *dev, size_t *gb_len)
+{
+	u8 *gb;
+
+	/*
+	 * Preserve the frozen API for out-of-tree consumers.  All in-tree
+	 * callers use nfc_copy_local_general_bytes(), which keeps the stable UAF
+	 * fix by copying while the LLCP local object is still referenced.
+	 */
+	mutex_lock(&nfc_legacy_gb_lock);
+	gb = nfc_copy_local_general_bytes(dev, nfc_legacy_gb,
+					  sizeof(nfc_legacy_gb), gb_len);
+	mutex_unlock(&nfc_legacy_gb_lock);
+
+	return gb;
 }
 EXPORT_SYMBOL(nfc_get_local_general_bytes);
 

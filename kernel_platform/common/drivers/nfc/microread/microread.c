@@ -251,7 +251,7 @@ static int microread_start_poll(struct nfc_hci_dev *hdev,
 		param[1] |= (1 << 1);
 
 	if ((im_protocols | tm_protocols) & NFC_PROTO_NFC_DEP_MASK) {
-		nfc_get_local_general_bytes(hdev->ndev, hdev->gb,
+		nfc_copy_local_general_bytes(hdev->ndev, hdev->gb,
 					    sizeof(hdev->gb), &hdev->gb_len);
 		if (hdev->gb_len == 0) {
 			im_protocols &= ~NFC_PROTO_NFC_DEP_MASK;

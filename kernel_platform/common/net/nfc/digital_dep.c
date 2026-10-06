@@ -1496,7 +1496,7 @@ static int digital_tg_send_atr_res(struct nfc_digital_dev *ddev,
 	size_t gb_len;
 	int rc;
 
-	nfc_get_local_general_bytes(ddev->nfc_dev, gb, sizeof(gb),
+	nfc_copy_local_general_bytes(ddev->nfc_dev, gb, sizeof(gb),
 				    &gb_len);
 
 	skb = digital_skb_alloc(ddev, sizeof(struct digital_atr_res) + gb_len);
