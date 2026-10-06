@@ -1345,7 +1345,7 @@ static void tcp_v6_restore_cb(struct sk_buff *skb)
 }
 
 /* Called from tcp_v4_syn_recv_sock() for v6_mapped children. */
-static void tcp_v6_mapped_child_init(struct sock *newsk, const struct sock *sk)
+void tcp_v6_mapped_child_init(struct sock *newsk, const struct sock *sk)
 {
 	struct inet_sock *newinet = inet_sk(newsk);
 	struct ipv6_pinfo *newnp;
@@ -1383,9 +1383,7 @@ static struct sock *tcp_v6_syn_recv_sock(const struct sock *sk, struct sk_buff *
 					 struct request_sock *req,
 					 struct dst_entry *dst,
 					 struct request_sock *req_unhash,
-					 bool *own_req,
-					 void (*opt_child_init)(struct sock *newsk,
-								const struct sock *sk))
+					 bool *own_req)
 {
 	struct inet_request_sock *ireq;
 	struct ipv6_pinfo *newnp;
@@ -1403,8 +1401,7 @@ static struct sock *tcp_v6_syn_recv_sock(const struct sock *sk, struct sk_buff *
 
 	if (skb->protocol == htons(ETH_P_IP))
 		return tcp_v4_syn_recv_sock(sk, skb, req, dst,
-					    req_unhash, own_req,
-					    tcp_v6_mapped_child_init);
+					    req_unhash, own_req);
 	ireq = inet_rsk(req);
 
 	if (sk_acceptq_is_full(sk))
