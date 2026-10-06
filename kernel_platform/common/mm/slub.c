@@ -3156,12 +3156,12 @@ static void init_kmem_cache_cpus(struct kmem_cache *s)
 	struct kmem_cache_cpu *c;
 
 	if (finegrain_lockdep)
-		lockdep_register_key(&s->lock_key);
+		lockdep_register_key(kmem_cache_lock_key(s));
 	for_each_possible_cpu(cpu) {
 		c = per_cpu_ptr(s->cpu_slab, cpu);
 		local_lock_init(&c->lock);
 		if (finegrain_lockdep)
-			lockdep_set_class(&c->lock, &s->lock_key);
+			lockdep_set_class(&c->lock, kmem_cache_lock_key(s));
 		c->tid = init_tid(cpu);
 	}
 }
@@ -5402,7 +5402,7 @@ void __kmem_cache_release(struct kmem_cache *s)
 #ifndef CONFIG_SLUB_TINY
 #ifdef CONFIG_PREEMPT_RT
 	if (s->cpu_slab)
-		lockdep_unregister_key(&s->lock_key);
+		lockdep_unregister_key(kmem_cache_lock_key(s));
 #endif
 	free_percpu(s->cpu_slab);
 #endif

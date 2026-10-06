@@ -262,7 +262,6 @@ struct kmem_cache_order_objects {
 struct kmem_cache {
 #ifndef CONFIG_SLUB_TINY
 	struct kmem_cache_cpu __percpu *cpu_slab;
-	struct lock_class_key lock_key;
 #endif
 	/* Used for retrieving partial slabs, etc. */
 	slab_flags_t flags;
@@ -317,8 +316,28 @@ struct kmem_cache {
 #endif
 
 	struct kmem_cache_node *node[MAX_NUMNODES];
+#ifdef CONFIG_ANDROID_VENDOR_OEM_DATA
 	ANDROID_OEM_DATA(1);
+#elif !defined(CONFIG_SLUB_TINY)
+	struct lock_class_key lock_key;
+#endif
 };
+
+#ifndef CONFIG_SLUB_TINY
+static inline struct lock_class_key *kmem_cache_lock_key(struct kmem_cache *s)
+{
+#ifdef CONFIG_ANDROID_VENDOR_OEM_DATA
+	BUILD_BUG_ON(sizeof(s->android_oem_data1) <
+		     sizeof(struct lock_class_key));
+	BUILD_BUG_ON(__alignof__(s->android_oem_data1) <
+		     __alignof__(struct lock_class_key));
+
+	return (struct lock_class_key *)&s->android_oem_data1;
+#else
+	return &s->lock_key;
+#endif
+}
+#endif
 
 #if defined(CONFIG_SYSFS) && !defined(CONFIG_SLUB_TINY)
 #define SLAB_SUPPORTS_SYSFS 1
