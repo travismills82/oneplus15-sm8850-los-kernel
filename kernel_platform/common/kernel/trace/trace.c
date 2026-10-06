@@ -9004,9 +9004,14 @@ static bool tr_option_match(struct trace_array *tr, void *topt)
 {
 	for (int i = 0; i < tr->nr_topts; i++) {
 		struct trace_options *tr_topts = &tr->topts[i];
+		struct trace_option_dentry *end = tr_topts->topts;
+
+		/* The allocation has one zeroed sentinel entry. */
+		while (end->opt)
+			end++;
 
 		if (topt >= (void *)&tr_topts->topts[0] &&
-		    topt < (void *)&tr_topts->topts[tr_topts->nr_topts])
+		    topt < (void *)end)
 			return true;
 	}
 	return false;
@@ -9334,7 +9339,6 @@ create_trace_option_files(struct trace_array *tr, struct tracer *tracer)
 	tr->topts = tr_topts;
 	tr->topts[tr->nr_topts].tracer = tracer;
 	tr->topts[tr->nr_topts].topts = topts;
-	tr->topts[tr->nr_topts].nr_topts = cnt;
 	tr->nr_topts++;
 
 	for (cnt = 0; opts[cnt].name; cnt++) {
