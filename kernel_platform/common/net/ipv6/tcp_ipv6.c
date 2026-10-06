@@ -2179,9 +2179,9 @@ static void get_tcp6_sock(struct seq_file *seq, struct sock *sp, int i)
 	} else if (icsk->icsk_pending == ICSK_TIME_PROBE0) {
 		timer_active	= 4;
 		timer_expires	= icsk->icsk_timeout;
-	} else if (timer_pending(&icsk->icsk_keepalive_timer)) {
+	} else if (timer_pending(&sk->sk_timer)) {
 		timer_active	= 2;
-		timer_expires	= icsk->icsk_keepalive_timer.expires;
+		timer_expires	= sk->sk_timer.expires;
 	} else {
 		timer_active	= 0;
 		timer_expires = jiffies;
