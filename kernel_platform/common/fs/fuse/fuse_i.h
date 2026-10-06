@@ -14,6 +14,7 @@
 #endif
 
 #include <linux/android_fuse.h>
+#include <linux/android_kabi.h>
 #include <linux/filter.h>
 #include <linux/pagemap.h>
 #include <linux/fuse.h>
@@ -971,6 +972,9 @@ struct fuse_conn {
 	/** Negotiated minor version */
 	unsigned minor;
 
+	/** Version counter for evict inode, stored in qualified alignment space */
+	ANDROID_KABI_IGNORE(1, atomic_t evict_ctr);
+
 	/** Entry on the fuse_conn_list */
 	struct list_head entry;
 
@@ -988,9 +992,6 @@ struct fuse_conn {
 
 	/** Version counter for attribute changes */
 	atomic64_t attr_version;
-
-	/** Version counter for evict inode */
-	atomic64_t evict_ctr;
 
 	/** Called on final put */
 	void (*release)(struct fuse_conn *);
@@ -1088,7 +1089,7 @@ static inline u64 fuse_get_attr_version(struct fuse_conn *fc)
 
 static inline u64 fuse_get_evict_ctr(struct fuse_conn *fc)
 {
-	return atomic64_read(&fc->evict_ctr);
+	return (u32)atomic_read(&fc->evict_ctr);
 }
 
 static inline bool fuse_stale_inode(const struct inode *inode, int generation,

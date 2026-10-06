@@ -180,7 +180,7 @@ static void fuse_evict_inode(struct inode *inode)
 		 * counter that can be compared to the starting value.
 		 */
 		if (inode->i_nlink > 0)
-			atomic64_inc(&fc->evict_ctr);
+			atomic_inc(&fc->evict_ctr);
 	}
 	if (S_ISREG(inode->i_mode) && !fuse_is_bad(inode)) {
 		WARN_ON(fi->iocachectr != 0);
@@ -1123,7 +1123,7 @@ void fuse_conn_init(struct fuse_conn *fc, struct fuse_mount *fm,
 	fc->initialized = 0;
 	fc->connected = 1;
 	atomic64_set(&fc->attr_version, 1);
-	atomic64_set(&fc->evict_ctr, 1);
+	atomic_set(&fc->evict_ctr, 1);
 	get_random_bytes(&fc->scramble_key, sizeof(fc->scramble_key));
 	fc->pid_ns = get_pid_ns(task_active_pid_ns(current));
 	fc->user_ns = get_user_ns(user_ns);
