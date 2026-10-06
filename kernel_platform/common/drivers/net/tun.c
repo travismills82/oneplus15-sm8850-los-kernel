@@ -95,6 +95,14 @@ ANDROID_KABI_TYPE_STRING(
 ANDROID_KABI_TYPE_STRING(
 	"tun_get_tx_ring",
 	"subprogram ( formal_parameter pointer_type { s#file } file ) -> pointer_type { s#ptr_ring }");
+ANDROID_KABI_DECLONLY(bpf_cgroup_storage);
+ANDROID_KABI_DECLONLY(inet_hashinfo);
+ANDROID_KABI_DECLONLY(ip_ra_chain);
+ANDROID_KABI_DECLONLY(sock_reuseport);
+ANDROID_KABI_DECLONLY(tcp_congestion_ops);
+ANDROID_KABI_DECLONLY(tcp_fastopen_context);
+ANDROID_KABI_DECLONLY(xfrm_policy);
+ANDROID_KABI_DECLONLY(xfrm_state);
 
 static void tun_default_link_ksettings(struct net_device *dev,
 				       struct ethtool_link_ksettings *cmd);
