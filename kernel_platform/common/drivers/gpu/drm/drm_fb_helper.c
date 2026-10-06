@@ -249,8 +249,6 @@ __drm_fb_helper_restore_fbdev_mode_unlocked(struct drm_fb_helper *fb_helper,
 /**
  * drm_fb_helper_restore_fbdev_mode_unlocked - restore fbdev configuration
  * @fb_helper: driver-allocated fbdev helper, can be NULL
- * @force: ignore present DRM master
- *
  * This helper should be called from fbdev emulation's &drm_client_funcs.restore
  * callback. It ensures that the user isn't greeted with a black screen when the
  * userspace compositor releases the display device.
@@ -258,9 +256,9 @@ __drm_fb_helper_restore_fbdev_mode_unlocked(struct drm_fb_helper *fb_helper,
  * Returns:
  * 0 on success, or a negative errno code otherwise.
  */
-int drm_fb_helper_restore_fbdev_mode_unlocked(struct drm_fb_helper *fb_helper, bool force)
+int drm_fb_helper_restore_fbdev_mode_unlocked(struct drm_fb_helper *fb_helper)
 {
-	return __drm_fb_helper_restore_fbdev_mode_unlocked(fb_helper, force);
+	return __drm_fb_helper_restore_fbdev_mode_unlocked(fb_helper, false);
 }
 EXPORT_SYMBOL(drm_fb_helper_restore_fbdev_mode_unlocked);
 
@@ -1937,3 +1935,16 @@ int drm_fb_helper_hotplug_event(struct drm_fb_helper *fb_helper)
 	return 0;
 }
 EXPORT_SYMBOL(drm_fb_helper_hotplug_event);
+
+/**
+ * drm_fb_helper_lastclose - DRM driver lastclose helper for fbdev emulation
+ * @dev: DRM device
+ *
+ * This function is obsolete. Call drm_fb_helper_restore_fbdev_mode_unlocked()
+ * instead.
+ */
+void drm_fb_helper_lastclose(struct drm_device *dev)
+{
+	drm_fb_helper_restore_fbdev_mode_unlocked(dev->fb_helper);
+}
+EXPORT_SYMBOL(drm_fb_helper_lastclose);
