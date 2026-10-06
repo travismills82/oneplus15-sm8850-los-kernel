@@ -410,8 +410,6 @@ struct pci_dev {
 	u16		l1ss;		/* L1SS Capability pointer */
 #ifdef CONFIG_PCIEASPM
 	struct pcie_link_state	*link_state;	/* ASPM link state */
-	unsigned int	aspm_l0s_support:1;	/* ASPM L0s support */
-	unsigned int	aspm_l1_support:1;	/* ASPM L1 support */
 	unsigned int	ltr_path:1;	/* Latency Tolerance Reporting
 					   supported from root to here */
 #endif
@@ -555,7 +553,12 @@ struct pci_dev {
 	/* These methods index pci_reset_fn_methods[] */
 	u8 reset_methods[PCI_NUM_RESET_METHODS]; /* In priority order */
 
+#ifdef CONFIG_PCIEASPM
+	ANDROID_KABI_USE2(1, unsigned int aspm_l0s_support:1,
+			  unsigned int aspm_l1_support:1);
+#else
 	ANDROID_KABI_RESERVE(1);
+#endif
 	ANDROID_KABI_RESERVE(2);
 	ANDROID_KABI_RESERVE(3);
 	ANDROID_KABI_RESERVE(4);
