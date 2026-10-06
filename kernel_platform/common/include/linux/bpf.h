@@ -749,7 +749,6 @@ enum bpf_arg_type {
 
 	ARG_PTR_TO_CTX,		/* pointer to context */
 	ARG_ANYTHING,		/* any (initialized) argument is ok */
-	ARG_SCALAR,		/* scalar argument */
 	ARG_PTR_TO_SPIN_LOCK,	/* pointer to bpf_spin_lock */
 	ARG_PTR_TO_SOCK_COMMON,	/* pointer to sock_common */
 	ARG_PTR_TO_SOCKET,	/* pointer to bpf_sock (fullsock) */
@@ -764,6 +763,7 @@ enum bpf_arg_type {
 	ARG_PTR_TO_TIMER,	/* pointer to bpf_timer */
 	ARG_KPTR_XCHG_DEST,	/* pointer to destination that kptrs are bpf_kptr_xchg'd into */
 	ARG_PTR_TO_DYNPTR,      /* pointer to bpf_dynptr. See bpf_type_flag for dynptr type */
+	ARG_SCALAR,		/* scalar argument */
 	__BPF_ARG_TYPE_MAX,
 
 	/* Extended arg_types. */
@@ -785,6 +785,8 @@ enum bpf_arg_type {
 	 */
 	__BPF_ARG_TYPE_LIMIT	= BPF_TYPE_LIMIT,
 };
+ANDROID_KABI_ENUMERATOR_IGNORE(bpf_arg_type, ARG_SCALAR);
+ANDROID_KABI_ENUMERATOR_VALUE(bpf_arg_type, __BPF_ARG_TYPE_MAX, 24);
 static_assert(__BPF_ARG_TYPE_MAX <= BPF_BASE_TYPE_LIMIT);
 
 /* type of values returned from helper functions */
