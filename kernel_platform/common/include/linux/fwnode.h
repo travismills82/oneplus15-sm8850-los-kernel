@@ -11,8 +11,10 @@
 
 #include <linux/bits.h>
 #include <linux/bitops.h>
+#include <linux/build_bug.h>
 #include <linux/err.h>
 #include <linux/list.h>
+#include <linux/stddef.h>
 #include <linux/types.h>
 #include <linux/android_kabi.h>
 
@@ -54,9 +56,15 @@ struct fwnode_handle {
 	struct device *dev;
 	struct list_head suppliers;
 	struct list_head consumers;
-	u8 android_abi_padding;
-	ANDROID_KABI_USE(1, unsigned long flags);
+	u8 flags;
+	ANDROID_KABI_RESERVE(1);
 };
+
+static_assert(offsetof(struct fwnode_handle, flags) %
+		      __alignof__(unsigned long) == 0);
+static_assert(offsetof(struct fwnode_handle, __kabi_reserved1) -
+		      offsetof(struct fwnode_handle, flags) >=
+		      sizeof(unsigned long));
 
 /*
  * fwnode link flags
@@ -202,6 +210,17 @@ struct fwnode_operations {
 			(fwnode)->ops->op(fwnode, ## __VA_ARGS__);	\
 	} while (false)
 
+/*
+ * The qualified Android KMI stores @flags as a byte followed by alignment
+ * padding.  Use that naturally aligned eight-byte storage for atomic bitops
+ * without changing the externally visible structure layout.  All defined
+ * FWNODE_FLAG_* values fit in the original byte.
+ */
+static inline unsigned long *fwnode_flags_word(struct fwnode_handle *fwnode)
+{
+	return (unsigned long *)&fwnode->flags;
+}
+
 static inline void fwnode_init(struct fwnode_handle *fwnode,
 			       const struct fwnode_operations *ops)
 {
@@ -210,31 +229,31 @@ static inline void fwnode_init(struct fwnode_handle *fwnode,
 	fwnode->dev = NULL;
 	INIT_LIST_HEAD(&fwnode->consumers);
 	INIT_LIST_HEAD(&fwnode->suppliers);
-	fwnode->flags = 0;
+	*fwnode_flags_word(fwnode) = 0;
 }
 
 static inline void fwnode_set_flag(struct fwnode_handle *fwnode,
 				   unsigned int bit)
 {
-	set_bit(bit, &fwnode->flags);
+	set_bit(bit, fwnode_flags_word(fwnode));
 }
 
 static inline void fwnode_clear_flag(struct fwnode_handle *fwnode,
 				     unsigned int bit)
 {
-	clear_bit(bit, &fwnode->flags);
+	clear_bit(bit, fwnode_flags_word(fwnode));
 }
 
 static inline void fwnode_assign_flag(struct fwnode_handle *fwnode,
 				      unsigned int bit, bool value)
 {
-	assign_bit(bit, &fwnode->flags, value);
+	assign_bit(bit, fwnode_flags_word(fwnode), value);
 }
 
 static inline bool fwnode_test_flag(struct fwnode_handle *fwnode,
 				    unsigned int bit)
 {
-	return test_bit(bit, &fwnode->flags);
+	return test_bit(bit, fwnode_flags_word(fwnode));
 }
 
 static inline void fwnode_dev_initialized(struct fwnode_handle *fwnode,
