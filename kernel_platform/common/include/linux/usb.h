@@ -1191,6 +1191,8 @@ static inline int usb_make_path(struct usb_device *dev, char *buf, size_t size)
 /* Stuff for dynamic usb ids */
 extern struct mutex usb_dynids_lock;
 struct usb_dynids {
+	/* Retained for the stock module ABI; usb_dynids_lock serializes access. */
+	spinlock_t lock;
 	struct list_head list;
 };
 
