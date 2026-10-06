@@ -44,6 +44,7 @@
 #include <linux/idr.h>
 #include <linux/of.h>
 #include <linux/rsc_table.h>
+#include <linux/android_kabi.h>
 
 struct rproc;
 
@@ -146,6 +147,7 @@ struct rproc_ops {
  *			a message.
  * @RPROC_RUNNING:	device is up and running
  * @RPROC_CRASHED:	device has crashed; need to start recovery
+ * @RPROC_DELETED:	legacy ABI state, retained but not assigned by the core
  * @RPROC_ATTACHED:	device has been booted by another entity and the core
  *			has attached to it
  * @RPROC_DETACHED:	device has been booted by another entity and waiting
@@ -163,9 +165,10 @@ enum rproc_state {
 	RPROC_SUSPENDED	= 1,
 	RPROC_RUNNING	= 2,
 	RPROC_CRASHED	= 3,
-	RPROC_ATTACHED	= 4,
-	RPROC_DETACHED	= 5,
-	RPROC_LAST	= 6,
+	RPROC_DELETED	= 4,
+	RPROC_ATTACHED	= 5,
+	RPROC_DETACHED	= 6,
+	RPROC_LAST	= 7,
 };
 
 /**
@@ -258,7 +261,6 @@ enum rproc_features {
  * @subdevs: list of subdevices, to following the running state
  * @notifyids: idr for dynamically assigning rproc-wide unique notify ids
  * @index: index of this rproc device
- * @attach_work: workqueue for attaching rproc
  * @crash_handler: workqueue for handling a crash
  * @crash_handler_lock: serializes crash handler queueing and deletion
  * @deleting: remoteproc deletion has begun
@@ -303,13 +305,12 @@ struct rproc {
 	struct list_head subdevs;
 	struct idr notifyids;
 	int index;
-	struct work_struct attach_work;
 	struct work_struct crash_handler;
-	spinlock_t crash_handler_lock;
-	bool deleting;
 	unsigned int crash_cnt;
 	bool recovery_disabled;
+	ANDROID_KABI_IGNORE(1, bool deleting);
 	int max_notifyid;
+	ANDROID_KABI_IGNORE(2, spinlock_t crash_handler_lock);
 	struct resource_table *table_ptr;
 	struct resource_table *clean_table;
 	struct resource_table *cached_table;

@@ -1674,11 +1674,20 @@ static void rproc_auto_boot_callback(const struct firmware *fw, void *context)
 	release_firmware(fw);
 }
 
+struct rproc_attach_work {
+	struct work_struct work;
+	struct rproc *rproc;
+};
+
 static void rproc_attach_work(struct work_struct *work)
 {
-	struct rproc *rproc = container_of(work, struct rproc, attach_work);
+	struct rproc_attach_work *attach_work =
+		container_of(work, struct rproc_attach_work, work);
+	struct rproc *rproc = attach_work->rproc;
 
 	rproc_boot(rproc);
+	put_device(&rproc->dev);
+	kfree(attach_work);
 }
 
 static int rproc_trigger_auto_boot(struct rproc *rproc)
@@ -1686,7 +1695,16 @@ static int rproc_trigger_auto_boot(struct rproc *rproc)
 	int ret;
 
 	if (rproc->state == RPROC_DETACHED) {
-		schedule_work(&rproc->attach_work);
+		struct rproc_attach_work *attach_work;
+
+		attach_work = kzalloc(sizeof(*attach_work), GFP_KERNEL);
+		if (!attach_work)
+			return -ENOMEM;
+
+		get_device(&rproc->dev);
+		attach_work->rproc = rproc;
+		INIT_WORK(&attach_work->work, rproc_attach_work);
+		schedule_work(&attach_work->work);
 		return 0;
 	}
 
@@ -2531,7 +2549,6 @@ struct rproc *rproc_alloc(struct device *dev, const char *name,
 	INIT_LIST_HEAD(&rproc->subdevs);
 	INIT_LIST_HEAD(&rproc->dump_segments);
 
-	INIT_WORK(&rproc->attach_work, rproc_attach_work);
 	INIT_WORK(&rproc->crash_handler, rproc_crash_handler_work);
 	spin_lock_init(&rproc->crash_handler_lock);
 
