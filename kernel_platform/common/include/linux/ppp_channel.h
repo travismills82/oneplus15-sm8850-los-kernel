@@ -15,6 +15,7 @@
  * ==FILEVERSION 20000322==
  */
 
+#include <linux/android_kabi.h>
 #include <linux/list.h>
 #include <linux/skbuff.h>
 #include <linux/poll.h>
@@ -42,7 +43,8 @@ struct ppp_channel {
 	int		hdrlen;		/* amount of headroom channel needs */
 	void		*ppp;		/* opaque to channel */
 	int		speed;		/* transfer rate (bytes/second) */
-	bool		direct_xmit;	/* no qdisc, xmit directly */
+	ANDROID_KABI_REPLACE(int, latency,
+			     bool direct_xmit); /* no qdisc, xmit directly */
 };
 
 #ifdef __KERNEL__
