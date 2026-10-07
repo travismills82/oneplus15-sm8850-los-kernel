@@ -16,6 +16,7 @@
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
+#include <linux/android_kabi.h>
 #include <linux/err.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
@@ -30,6 +31,16 @@
 #include <media/v4l2-mc.h>
 
 #include <trace/events/vb2.h>
+
+/*
+ * size_t and ssize_t use the same machine return convention and width.  Keep
+ * the signed implementation while preserving the shipping .601 symbol type
+ * seen by external modules.
+ */
+static_assert(sizeof(size_t) == sizeof(ssize_t));
+ANDROID_KABI_TYPE_STRING(
+	"vb2_read",
+	"subprogram ( formal_parameter pointer_type { s#vb2_queue } q , formal_parameter pointer_type { base_type char byte_size(1) encoding(8) } data , formal_parameter t#size_t count , formal_parameter pointer_type { t#loff_t } ppos , formal_parameter base_type int byte_size(4) encoding(5) nonblocking ) -> t#size_t");
 
 #define PLANE_INDEX_BITS	3
 #define PLANE_INDEX_SHIFT	(PAGE_SHIFT + PLANE_INDEX_BITS)
