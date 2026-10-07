@@ -61184,6 +61184,8 @@ member {
   name: "_not_send"
   type_id: 0x46d4dd43
   offset: 32
+}
+member {
   id: 0x671fde3d
   name: "_nfct"
   type_id: 0x3f691753
