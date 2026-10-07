@@ -66,7 +66,8 @@ struct dm_verity {
 	unsigned int hash_reqsize; /* the size of temporary space for crypto */
 	enum verity_mode mode;	/* mode for handling verification errors */
 	enum verity_mode error_mode;/* mode for handling I/O errors */
-	atomic_t corrupted_errs;/* Number of errors for corrupted blocks */
+	ANDROID_KABI_REPLACE(unsigned int, corrupted_errs,
+			     atomic_t corrupted_errs); /* Corrupted blocks */
 
 	struct workqueue_struct *verify_wq;
 
