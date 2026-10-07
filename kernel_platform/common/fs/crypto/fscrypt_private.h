@@ -621,7 +621,9 @@ struct fscrypt_master_key {
 	 * The secret key material.  Wiped as soon as it is no longer needed;
 	 * for details, see the fscrypt_master_key struct comment.
 	 *
-	 * Locking: protected by ->mk_sem.
+	 * Locking: protected by ->mk_sem.  The live list is placed in the
+	 * historical prepared-key array storage below; this slot remains only
+	 * to preserve the shipping pointer-shaped KABI member.
 	 */
 	struct fscrypt_master_key_secret	mk_secret;
 
@@ -645,7 +647,8 @@ struct fscrypt_master_key {
 	 *
 	 * Locking: protected by ->mk_sem.
 	 */
-	struct list_head	mk_users;
+	ANDROID_KABI_REPLACE(struct key *, mk_users,
+			     u64 mk_users_compat_padding);
 
 	/*
 	 * List of inodes that were unlocked using this key.  This allows the
@@ -655,21 +658,21 @@ struct fscrypt_master_key {
 	spinlock_t		mk_decrypted_inodes_lock;
 
 	/*
-	 * A list of 'struct fscrypt_mode_key' for the (hkdf_context, mode_num,
-	 * data_unit_bits, inlinecrypt) combinations that are in use for this
-	 * master key, for hkdf_context in [HKDF_CONTEXT_DIRECT_KEY,
-	 * HKDF_CONTEXT_IV_INO_LBLK_32_KEY, HKDF_CONTEXT_IV_INO_LBLK_64_KEY].
-	 *
-	 * This is a linked list and not a hash table because in practice
-	 * there's just a single encryption policy per master key, using
-	 * _at most_ 2 nodes in this list.  Per-file keys don't use this at all.
-	 *
-	 * This list is append-only until the master key is fully removed, at
-	 * which time the list is cleared.  Before then,
+	 * Preserve the three historical prepared-key arrays as the external
+	 * KABI layout.  The first array's storage now holds the two lists used
+	 * by the current implementation; the remaining historical storage is
+	 * retained so all following members keep their shipping offsets.
+	 * mk_mode_keys is append-only until the master key is fully removed.
 	 * fscrypt_mode_key_setup_mutex synchronizes appends, and searches use
 	 * the RCU read lock together with ->mk_sem held for read.
 	 */
-	struct list_head	mk_mode_keys;
+	ANDROID_KABI_REPLACE(
+		struct fscrypt_prepared_key,
+		mk_direct_keys[FSCRYPT_MODE_MAX + 1],
+		struct list_head mk_users;
+		struct list_head mk_mode_keys);
+	struct fscrypt_prepared_key mk_iv_ino_lblk_64_keys[FSCRYPT_MODE_MAX + 1];
+	struct fscrypt_prepared_key mk_iv_ino_lblk_32_keys[FSCRYPT_MODE_MAX + 1];
 
 	/* Hash key for inode numbers.  Initialized only when needed. */
 	siphash_key_t		mk_ino_hash_key;
