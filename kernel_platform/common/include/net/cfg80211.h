@@ -6492,7 +6492,8 @@ struct wireless_dev {
 
 	struct list_head pmsr_list;
 	spinlock_t pmsr_lock;
-	struct wiphy_work pmsr_free_wk;
+	ANDROID_KABI_REPLACE(struct work_struct, pmsr_free_wk,
+			     struct wiphy_work pmsr_free_wk);
 
 	unsigned long unprot_beacon_reported;
 
