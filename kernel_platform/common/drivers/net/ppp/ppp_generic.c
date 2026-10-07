@@ -54,6 +54,20 @@
 #include <net/net_namespace.h>
 #include <net/netns/generic.h>
 
+/*
+ * ANDROID KABI: Keep the shipping .601 symbol representation for this
+ * interface.  The ppp_channel latency-to-direct_xmit replacement is layout
+ * compatible, but gendwarfksyms' replacement-name state otherwise escapes
+ * into the second formal parameter when struct net and struct ppp_channel
+ * are expanded together.  Keep both live type references in the rule so
+ * genuine changes to either structure remain visible to versioning.
+ */
+ANDROID_KABI_TYPE_STRING(
+	"ppp_register_net_channel",
+	"subprogram ( formal_parameter pointer_type { s#net } net , "
+	"formal_parameter pointer_type { s#ppp_channel } chan ) -> "
+	"base_type int byte_size(4) encoding(5)");
+
 #define PPP_VERSION	"2.4.2"
 
 /*
