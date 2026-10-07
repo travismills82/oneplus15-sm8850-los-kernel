@@ -449,13 +449,14 @@ EXPORT_SYMBOL(netfs_read_subreq_progress);
 /**
  * netfs_read_subreq_terminated - Note the termination of an I/O operation.
  * @subreq: The I/O request that has terminated.
+ * @error: Error code indicating the type of completion.
  * @was_async: True if we're in an asynchronous context.
  *
  * This tells the read helper that a contributory I/O operation has terminated,
  * one way or another, and that it should integrate the results.
  *
- * The caller indicates the outcome of the operation through @subreq->error,
- * supplying 0 to indicate a successful or retryable transfer (if
+ * The caller indicates the outcome of the operation through @error, supplying
+ * 0 to indicate a successful or retryable transfer (if
  * NETFS_SREQ_NEED_RETRY is set) or a negative error code.  The helper will
  * look after reissuing I/O operations as appropriate and writing downloaded
  * data to the cache.
@@ -463,10 +464,12 @@ EXPORT_SYMBOL(netfs_read_subreq_progress);
  * Before calling, the filesystem should update subreq->transferred to track
  * the amount of data copied into the output buffer.
  */
-void netfs_read_subreq_terminated(struct netfs_io_subrequest *subreq, bool was_async)
+void netfs_read_subreq_terminated(struct netfs_io_subrequest *subreq,
+				  int error, bool was_async)
 {
 	struct netfs_io_request *rreq = subreq->rreq;
 
+	subreq->error = error;
 	might_sleep();
 
 	switch (subreq->source) {
@@ -557,6 +560,6 @@ void netfs_read_subreq_termination_worker(struct work_struct *work)
 	struct netfs_io_subrequest *subreq =
 		container_of(work, struct netfs_io_subrequest, work);
 
-	netfs_read_subreq_terminated(subreq, false);
+	netfs_read_subreq_terminated(subreq, subreq->error, false);
 }
 EXPORT_SYMBOL(netfs_read_subreq_termination_worker);

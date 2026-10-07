@@ -196,7 +196,7 @@ static void netfs_cache_read_terminated(void *priv, ssize_t transferred_or_error
 	} else {
 		subreq->error = transferred_or_error;
 	}
-	netfs_read_subreq_terminated(subreq, was_async);
+	netfs_read_subreq_terminated(subreq, subreq->error, was_async);
 }
 
 /*
@@ -297,7 +297,7 @@ static void netfs_read_to_pagecache(struct netfs_io_request *rreq)
 				goto prep_iter_failed;
 			__set_bit(NETFS_SREQ_CLEAR_TAIL, &subreq->flags);
 			subreq->error = 0;
-			netfs_read_subreq_terminated(subreq, false);
+			netfs_read_subreq_terminated(subreq, subreq->error, false);
 			goto done;
 		}
 
