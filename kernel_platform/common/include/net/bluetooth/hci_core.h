@@ -130,9 +130,7 @@ struct hci_conn_hash {
 	struct list_head list;
 	unsigned int     acl_num;
 	unsigned int     sco_num;
-	unsigned int     cis_num;
-	unsigned int     bis_num;
-	unsigned int     pa_num;
+	unsigned int     iso_num;
 	unsigned int     le_num;
 	unsigned int     le_num_peripheral;
 };
@@ -654,8 +652,9 @@ struct hci_dev {
 				     __u8 **vnd_data);
 	u8 (*classify_pkt_type)(struct hci_dev *hdev, struct sk_buff *skb);
 
-	ANDROID_KABI_RESERVE(1);
-	ANDROID_KABI_RESERVE(2);
+	ANDROID_KABI_USE2(1, unsigned int cis_num, unsigned int bis_num);
+	ANDROID_KABI_USE2(2, unsigned int pa_num,
+			  unsigned int hci_count_pad);
 	ANDROID_KABI_RESERVE(3);
 	ANDROID_KABI_RESERVE(4);
 };
@@ -1020,13 +1019,16 @@ static inline void hci_conn_hash_add(struct hci_dev *hdev, struct hci_conn *c)
 		h->sco_num++;
 		break;
 	case CIS_LINK:
-		h->cis_num++;
+		h->iso_num++;
+		hdev->cis_num++;
 		break;
 	case BIS_LINK:
-		h->bis_num++;
+		h->iso_num++;
+		hdev->bis_num++;
 		break;
 	case PA_LINK:
-		h->pa_num++;
+		h->iso_num++;
+		hdev->pa_num++;
 		break;
 	}
 }
@@ -1052,13 +1054,16 @@ static inline void hci_conn_hash_del(struct hci_dev *hdev, struct hci_conn *c)
 		h->sco_num--;
 		break;
 	case CIS_LINK:
-		h->cis_num--;
+		h->iso_num--;
+		hdev->cis_num--;
 		break;
 	case BIS_LINK:
-		h->bis_num--;
+		h->iso_num--;
+		hdev->bis_num--;
 		break;
 	case PA_LINK:
-		h->pa_num--;
+		h->iso_num--;
+		hdev->pa_num--;
 		break;
 	}
 }
@@ -1075,11 +1080,11 @@ static inline unsigned int hci_conn_num(struct hci_dev *hdev, __u8 type)
 	case ESCO_LINK:
 		return h->sco_num;
 	case CIS_LINK:
-		return h->cis_num;
+		return hdev->cis_num;
 	case BIS_LINK:
-		return h->bis_num;
+		return hdev->bis_num;
 	case PA_LINK:
-		return h->pa_num;
+		return hdev->pa_num;
 	default:
 		return 0;
 	}
@@ -1089,15 +1094,12 @@ static inline unsigned int hci_conn_count(struct hci_dev *hdev)
 {
 	struct hci_conn_hash *c = &hdev->conn_hash;
 
-	return c->acl_num + c->sco_num + c->le_num + c->cis_num + c->bis_num +
-		c->pa_num;
+	return c->acl_num + c->sco_num + c->le_num + c->iso_num;
 }
 
 static inline unsigned int hci_iso_count(struct hci_dev *hdev)
 {
-	struct hci_conn_hash *c = &hdev->conn_hash;
-
-	return c->cis_num + c->bis_num;
+	return hdev->cis_num + hdev->bis_num;
 }
 
 static inline bool hci_conn_valid(struct hci_dev *hdev, struct hci_conn *conn)
