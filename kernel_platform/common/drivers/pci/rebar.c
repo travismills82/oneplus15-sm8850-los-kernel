@@ -152,8 +152,8 @@ void pci_restore_rebar_state(struct pci_dev *pdev)
 	}
 }
 
-int pci_resize_resource(struct pci_dev *dev, int resno, int size,
-			int exclude_bars)
+int pci_resize_resource_exclude_bars(struct pci_dev *dev, int resno, int size,
+				     int exclude_bars)
 {
 	struct pci_host_bridge *host;
 	u32 sizes;
@@ -176,5 +176,11 @@ int pci_resize_resource(struct pci_dev *dev, int resno, int size,
 		return -EINVAL;
 
 	return pci_do_resource_release_and_resize(dev, resno, size, exclude_bars);
+}
+EXPORT_SYMBOL(pci_resize_resource_exclude_bars);
+
+int pci_resize_resource(struct pci_dev *dev, int resno, int size)
+{
+	return pci_resize_resource_exclude_bars(dev, resno, size, 0);
 }
 EXPORT_SYMBOL(pci_resize_resource);
