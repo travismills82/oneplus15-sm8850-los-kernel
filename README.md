@@ -11,12 +11,48 @@ kernel, module, FBE/user0, and boot-container contract.
 
 | Firmware | Device physically tested | Kernel | Status | Release tag |
 |---|---|---|---|---|
+| OxygenOS 16.0.10.601(EX01) | CPH2749 / OP611FL1 | `6.12.112-android16-6-o-g8dd9cb4790b7-4k` | Watchdog-corrected boot/stability release | `oos16.0.10.601-linux-6.12.112-kmi6-watchdog` |
 | OxygenOS 16.0.10.601(EX01) | CPH2749 / OP611FL1 | `6.12.95-android16-6-o-g02714090683b-4k` | Boot/stability release | `oos16.0.10.601-linux-6.12.95-kmi6-canary` |
 | OxygenOS 16.0.10.601(EX01) | CPH2749 / OP611FL1 | `6.12.89-android16-6-o-g5d9b99c7d104-4k` | Fully qualified rollback baseline | `oos16.0.10.601-linux-6.12.89-kmi6` |
 | OxygenOS 16.0.9.400(EX01) | CPH2749 / OP611FL1 | `6.12.52-android16-5-o-gfa9fe14314c7-4k` | Fully qualified | `oos16.0.9.400-ack-6.12.52` |
 | OxygenOS 16.0.10.500(EX01) | CPH2747 | `6.12.37-android16-5-o-g57b52d3bb803-4k` | Fully qualified | `oos16.0.10.500-ack-6.12.37` |
 
 Use only the release matching the installed firmware.
+
+## Linux 6.12.112 watchdog release for OxygenOS 16.0.10.601
+
+| Field | Tested value |
+|---|---|
+| Device family | OnePlus 15 / `infiniti` / `canoe` |
+| Physical device | CPH2749 / OP611FL1 |
+| Firmware | `CPH2749_16.0.10.601(EX01)` |
+| Kernel | `6.12.112-android16-6-o-g8dd9cb4790b7-4k` |
+| KMI generation | Android 16 generation 6 |
+| Source commit containing the tested tree | `1cd6164a81e631e33a3d8181c357630607f5fd65` |
+| `boot.img` size | 100,663,296 bytes |
+| `boot.img` SHA-256 | `a44ee825f3eb58ce84e7c2d24ebaeccce4669695f9c57bc0904184ffe10d4f6f` |
+| Embedded Image SHA-256 | `6afffa074630cdfa52b50ed7881e0ef85c82731186ee034637671ba080ee7531` |
+| TWRP ZIP SHA-256 | `9e946551c2cf196e2a9cf685ff58a64bf87e87baf2af9d73d1c612a537312b5e` |
+
+This release preserves the boot-only architecture with the untouched
+OxygenOS 16.0.10.601 `system_dlkm`, `vendor_dlkm`, `vendor_boot`, `init_boot`,
+DTBO, VBMeta, metadata, and userdata. The full `.601` oracle passed all 1,021
+stock modules: 985 active compatible, 36 dormant, 56,594 hard imports and
+57,621 MODVERSIONS records matched, with zero missing providers, CRC
+mismatches, namespace failures, or active blockers.
+
+The exact boot image passed full active-boot write/read-back, Android boot,
+user0 `RUNNING_UNLOCKED`, F2FS `/data` with `inlinecrypt`, Wi-Fi, Bluetooth,
+NFC, LTE/RMNET, USB/ADB, ZRAM, CPUFreq, and fatal kernel/module scans. A
+692-second monitored canary crossed every prior watchdog report window with
+zero false-positive ADCI, ZRAM, HFI, or hardware-fence idle reports. Exact
+task-name and wait-channel matching leaves active subsystem stalls visible.
+
+USB-disconnected deep suspend and direct camera/audio/fingerprint operation
+were not exercised during this specific watchdog canary. See:
+
+- [6.12.112 watchdog validation](docs/validation/firmware-16.0.10.601/oos1610601-linux-6.12.112-watchdog-validation-2026-10-08.md)
+- [6.12.112 release notes](docs/releases/oos16.0.10.601-linux-6.12.112-kmi6-watchdog/release-notes.md)
 
 ## Linux 6.12.95 boot/stability release for OxygenOS 16.0.10.601
 
