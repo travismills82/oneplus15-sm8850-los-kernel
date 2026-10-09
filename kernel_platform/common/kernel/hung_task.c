@@ -10,6 +10,7 @@
 #include <linux/cpu.h>
 #include <linux/nmi.h>
 #include <linux/init.h>
+#include <linux/kallsyms.h>
 #include <linux/delay.h>
 #include <linux/freezer.h>
 #include <linux/kthread.h>
@@ -59,6 +60,51 @@ static bool hung_task_call_panic;
 static bool hung_task_show_all_bt;
 
 static struct task_struct *watchdog_task;
+
+/*
+ * Some Qualcomm/Oplus service threads deliberately spend their idle lifetime
+ * in TASK_UNINTERRUPTIBLE.  Oplus' hung-task vendor hook runs before the
+ * generic detector and reports these waits even though no work is pending.
+ *
+ * Keep this exception deliberately narrow: the task must be a kernel thread,
+ * must not be in I/O wait, and both its exact comm and current wait channel
+ * must identify a known idle site.  If any of these workers moves into its
+ * active transaction path, its wait channel changes and normal hung-task
+ * reporting remains enabled.
+ */
+static bool hung_task_expected_idle_kthread(struct task_struct *t,
+					    unsigned int state)
+{
+	char comm[TASK_COMM_LEN];
+	char wchan[KSYM_NAME_LEN];
+	unsigned long ip;
+
+	if (state != TASK_UNINTERRUPTIBLE ||
+	    !(READ_ONCE(t->flags) & PF_KTHREAD) || t->in_iowait)
+		return false;
+
+	get_task_comm(comm, t);
+	if (strcmp(comm, "adci_thread") && strcmp(comm, "zram_comp") &&
+	    strcmp(comm, "hfi_core_dbg_cl") &&
+	    strcmp(comm, "msm_hw_fence_so"))
+		return false;
+
+	ip = get_wchan(t);
+	if (!ip || lookup_symbol_name(ip, wchan))
+		return false;
+
+	if (!strcmp(comm, "adci_thread"))
+		return !strcmp(wchan, "__scm_smc_call") ||
+		       !strcmp(wchan, "wait_to_die");
+
+	if (!strcmp(comm, "zram_comp"))
+		return !strcmp(wchan, "zram_qpace_comp");
+
+	if (!strcmp(comm, "hfi_core_dbg_cl"))
+		return !strcmp(wchan, "hfi_core_dbg_listener");
+
+	return !strcmp(wchan, "hw_fence_soccp_listener");
+}
 
 #ifdef CONFIG_SMP
 /*
@@ -234,7 +280,7 @@ static void check_hung_uninterruptible_tasks(unsigned long timeout)
 	hung_task_show_lock = false;
 	rcu_read_lock();
 	for_each_process_thread(g, t) {
-		unsigned int state;
+		unsigned int state = READ_ONCE(t->__state);
 
 		if (!max_count--)
 			goto unlock;
@@ -247,6 +293,9 @@ static void check_hung_uninterruptible_tasks(unsigned long timeout)
 		 * skip the TASK_KILLABLE tasks -- these can be killed
 		 * skip the TASK_IDLE tasks -- those are genuinely idle
 		 */
+		if (hung_task_expected_idle_kthread(t, state))
+			continue;
+
 		trace_android_vh_check_uninterruptible_tasks(t, timeout, &need_check);
 		if (need_check) {
 			state = READ_ONCE(t->__state);
