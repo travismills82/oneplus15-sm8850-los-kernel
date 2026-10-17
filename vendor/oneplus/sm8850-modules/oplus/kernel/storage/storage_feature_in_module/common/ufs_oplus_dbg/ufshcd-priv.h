@@ -1,1 +1,1 @@
-../../../../../../../../../common/drivers/ufs/core/ufshcd-priv.h
+../../../../../../../../../kernel_platform/common/drivers/ufs/core/ufshcd-priv.h

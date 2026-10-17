@@ -2,7 +2,7 @@
 
 """Paths relative to the main platform workspace."""
 
-SOC_REPO_PATH = "vendor/oneplus/sm8850"
+SOC_REPO_PATH = "soc-repo"
 SOC_MODULES_REPO_PATH = "vendor/oneplus/sm8850-modules"
 
 def soc_label(target):
