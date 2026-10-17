@@ -33321,7 +33321,13 @@ static int __wlan_hdd_cfg80211_set_mon_ch(struct wiphy *wiphy,
 	return 0;
 }
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 13, 0))
+/*
+ * Stable commit d6aef302c418 (upstream 9c4f83092775) backported the
+ * net_device argument to the 6.12.y cfg80211 callback in v6.12.101.
+ */
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 13, 0)) || \
+	((LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 101)) && \
+	 (LINUX_VERSION_CODE < KERNEL_VERSION(6, 13, 0)))
 /*
  * wlan_hdd_cfg80211_set_mon_ch() - Set monitor mode capture channel
  * @wiphy: Handle to struct wiphy to get handle to module context.
