@@ -19,6 +19,24 @@ kernel, module, FBE/user0, and boot-container contract.
 
 Use only the release matching the installed firmware.
 
+## LineageOS 24 experimental branch
+
+Branch `Lineage-24.0` contains a static OnePlus 15 / `infiniti` candidate that
+combines the project's Linux 6.12.112 common kernel with the exact LineageOS 24
+SM8850 SoC, device-tree, Qualcomm/Oplus module, and CodeLinaro-derived driver
+snapshots. The candidate source is `ce4de3b9cea1`; its kernel release is
+`6.12.112-android16-6-o-gce4de3b9cea1-4k`.
+
+The production Canoe distribution, enforced common ABI comparison, and Canoe
+device-module ABI generation pass. This is not yet a release and has not been
+physically tested. Do not cross-flash the generated generic images until the
+installed LineageOS build's boot/AVB, DT, and module-partition contract has
+been captured and compared.
+
+See [the LineageOS 24 integration status](docs/lineage-24.0/integration-status.md)
+for exact source revisions, CodeLinaro tags, compatibility commits, build
+results, hashes, and the remaining device-qualification boundary.
+
 ## Linux 6.12.112 watchdog release for OxygenOS 16.0.10.601
 
 | Field | Tested value |
