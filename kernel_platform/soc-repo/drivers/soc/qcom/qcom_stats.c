@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2011-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2025, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  */
 
 #include <linux/cdev.h>
@@ -101,6 +101,15 @@
 #define DCP_IOCTL		_IOR(SUBSYSTEM_STATS_MAGIC_NUM, 15, \
 				     struct sleep_stats *)
 
+#define AM_IOCTL		_IOR(SUBSYSTEM_STATS_MAGIC_NUM, 16, \
+				     struct sleep_stats *)
+
+#define WM_IOCTL		_IOR(SUBSYSTEM_STATS_MAGIC_NUM, 17, \
+				     struct sleep_stats *)
+
+#define LMCU_IOCTL		_IOR(SUBSYSTEM_STATS_MAGIC_NUM, 18, \
+				     struct sleep_stats *)
+
 struct subsystem_data {
 	const char *name;
 	u32 smem_item;
@@ -124,6 +133,9 @@ static struct subsystem_data subsystems[] = {
 	{ "apss", 631, QCOM_SMEM_HOST_ANY },
 	{ "soccp", 607, 19 },
 	{ "dcp", 607, 22 },
+	{ "am", 679, 24 },
+	{ "wm", 678, 23 },
+	{ "lmcu", 607, 26 },
 };
 
 struct stats_config {
@@ -162,15 +174,6 @@ struct stats_drvdata {
 };
 
 static struct stats_drvdata *drv;
-
-#ifdef CONFIG_OPLUS_RPMH_QCOM
-void *get_drvdata(void)
-{
-	return (void *)drv;
-}
-
-EXPORT_SYMBOL_GPL(get_drvdata);
-#endif
 
 struct sleep_stats {
 	u32 stat_type;
@@ -472,6 +475,15 @@ static long qcom_stats_device_ioctl(struct file *file, unsigned int cmd,
 		break;
 	case DCP_IOCTL:
 		subsystem = &subsystems[14];
+		break;
+	case AM_IOCTL:
+		subsystem = &subsystems[15];
+		break;
+	case WM_IOCTL:
+		subsystem = &subsystems[16];
+		break;
+	case LMCU_IOCTL:
+		subsystem = &subsystems[17];
 		break;
 	case AOSD_IOCTL:
 		stats_id = 0;
@@ -1273,6 +1285,14 @@ static const struct stats_config rpm_data = {
 	.subsystem_stats_in_smem = false,
 };
 
+static const struct stats_config rpm_v2_data = {
+	.stats_offset = 0,
+	.num_records = 2,
+	.appended_stats_avail = true,
+	.dynamic_offset = true,
+	.subsystem_stats_in_smem = true,
+};
+
 /* Older RPM firmwares have the stats at a fixed offset instead */
 static const struct stats_config rpm_data_dba0 = {
 	.stats_offset = 0xdba0,
@@ -1344,6 +1364,7 @@ static const struct of_device_id qcom_stats_table[] = {
 	{ .compatible = "qcom,msm8916-rpm-stats", .data = &rpm_data_dba0 },
 	{ .compatible = "qcom,msm8974-rpm-stats", .data = &rpm_data_dba0 },
 	{ .compatible = "qcom,rpm-stats", .data = &rpm_data },
+	{ .compatible = "qcom,rpm-stats-v2", .data = &rpm_v2_data },
 	{ .compatible = "qcom,rpmh-stats", .data = &rpmh_data },
 	{ .compatible = "qcom,rpmh-stats-v2", .data = &rpmh_v2_data },
 	{ .compatible = "qcom,rpmh-stats-v3", .data = &rpmh_v3_data },

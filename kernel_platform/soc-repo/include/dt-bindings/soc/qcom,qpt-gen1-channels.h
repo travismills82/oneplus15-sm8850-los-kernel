@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause) */
 /*
- * Copyright (c) 2025 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  */
 
 #ifndef _DT_BINDINGS_QCOM_QPT_CHANNELS_H
@@ -8,6 +8,7 @@
 
 #define QPT_GEN1_CHAN_ID(sid, reg_id) (sid << 8 | reg_id)
 
+#define QPT_LANDO_SID	0
 #define QPT_F10_B_SID	1
 #define QPT_F10_D_SID	3
 #define QPT_F10_F_SID	5
@@ -25,6 +26,7 @@
 #define QPT_S8_REG	0xb0
 #define QPT_S9_REG	0xb3
 #define QPT_S10_REG	0xb6
+#define QPT_S11_REG     0xb9
 #define QPT_BOB1_REG	0xe5
 #define QPT_BOB2_REG	0xe7
 

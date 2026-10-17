@@ -1,4 +1,8 @@
+load(":drivers/power/supply/qcom/modules.bzl", register_qcom = "register_modules")
+
 def register_modules(registry):
+    register_qcom(registry)
+
     registry.register(
         name = "drivers/power/supply/qti_battery_charger",
         out = "qti_battery_charger.ko",
@@ -6,6 +10,10 @@ def register_modules(registry):
         srcs = [
             # do not sort
             "drivers/power/supply/qti_battery_charger.c",
+            "drivers/power/supply/qti_charger_boost_lib.c",
+            "drivers/power/supply/qti_charger_boost_lib.h",
+            "drivers/power/supply/qti_typec_class.c",
+            "drivers/power/supply/qti_typec_class.h",
         ],
         deps = [
             # do not sort
@@ -30,5 +38,16 @@ def register_modules(registry):
             "drivers/virt/gunyah/gh_msgq",
             "drivers/virt/gunyah/gh_dbl",
             "arch/arm64/gunyah/gh_arm_drv",
+            "drivers/regulator/debug-regulator",
+        ],
+    )
+
+    registry.register(
+        name = "drivers/power/supply/max1720x_battery",
+        out = "max1720x_battery.ko",
+        config = "CONFIG_BATTERY_MAX1720X",
+        srcs = [
+            # do not sort
+            "drivers/power/supply/max1720x_battery.c",
         ],
     )

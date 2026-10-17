@@ -16,7 +16,7 @@
 
 #define MAX_QMP_MSG_SIZE	0x64
 #define DEFAULT_PROFILE_INDEX 0
-#define MAX_PROFILE_INDEX 10
+#define NUM_AVAILABlE_PROFILE 6
 #define DEFAULT_INTERVAL 250
 
 struct fdcvs_platform_data {
@@ -49,7 +49,7 @@ static ssize_t profile_index_store(struct device *dev,
 	if (kstrtou32(buf, 0, &val))
 		return -EINVAL;
 
-	if (val > MAX_PROFILE_INDEX) {
+	if (val > NUM_AVAILABlE_PROFILE) {
 		pr_err("profile index out of range\n");
 		return -EINVAL;
 	}

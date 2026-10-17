@@ -11,4 +11,5 @@ int hgy_virq_send(struct hvirq_dbl *dbl);
 int hgy_virq_tx_unregister(struct hvirq_dbl *dbl);
 int hgy_virq_rx_unregister(struct hvirq_dbl *dbl);
 int hgy_get_virq_num_id(void **virqdev, int label);
+int hgy_init_virt_irq(void);
 #endif

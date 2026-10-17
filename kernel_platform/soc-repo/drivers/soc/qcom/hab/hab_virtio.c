@@ -9,6 +9,7 @@
 #include <uapi/linux/virtio_ids.h>
 #include <linux/version.h>
 #include <linux/cma.h>
+#include <linux/scatterlist.h>
 
 #include "hab_virtio.h" /* requires hab.h */
 #include "hab_trace_os.h"
@@ -25,10 +26,16 @@
 #define HAB_VIRTIO_DEVICE_ID_VNW	96
 #define HAB_VIRTIO_DEVICE_ID_EXT	97
 #define HAB_VIRTIO_DEVICE_ID_GPCE	98
+#define HAB_VIRTIO_DEVICE_ID_SOCCP	99
+#define HAB_VIRTIO_DEVICE_ID_DPRX	100
+#define HAB_VIRTIO_DEVICE_ID_EVA	101
+#define HAB_VIRTIO_DEVICE_ID_HSI2S	102
 
 /* all probed virtio_hab stored in this list */
 static struct list_head vhab_list = LIST_HEAD_INIT(vhab_list);
 static DEFINE_SPINLOCK(vh_lock);
+
+static DEFINE_MUTEX(virthab_init_lock);
 
 static struct virtio_device_tbl {
 	int32_t mmid;
@@ -46,15 +53,23 @@ static struct virtio_device_tbl {
 	{ MM_VNW_1, HAB_VIRTIO_DEVICE_ID_VNW, NULL },
 	{ MM_EXT_1, HAB_VIRTIO_DEVICE_ID_EXT, NULL },
 	{ MM_GPCE_1, HAB_VIRTIO_DEVICE_ID_GPCE, NULL },
+	{ MM_SOCCP_1, HAB_VIRTIO_DEVICE_ID_SOCCP, NULL },
+	{ MM_DPRX_1, HAB_VIRTIO_DEVICE_ID_DPRX, NULL },
+	{ MM_EVA_1, HAB_VIRTIO_DEVICE_ID_EVA, NULL },
+	{ MM_HSI2S_1, HAB_VIRTIO_DEVICE_ID_HSI2S, NULL },
 };
 
 enum pool_type_t {
 	PT_OUT_SMALL = 0, /* 512 bytes */
 	PT_OUT_MEDIUM,    /* 5120 bytes */
-	PT_OUT_LARGE,     /* 51200 bytes */
+	PT_OUT_LARGE,     /* 64 * 1024 bytes */
+	PT_OUT_DYNA_SGL,         /* memory allocated by hab_sgl_alloc_merge */
+	PT_OUT_DYNA_KMALLOC,     /* memory allocated by kmalloc */
 	PT_IN,          /* 5120 bytes */
 	PT_MAX
 };
+
+#define HAB_DYNAMIC_ALLOC_INDEX 0x0
 
 #define GUARD_BAND_SZ 20
 
@@ -66,6 +81,10 @@ struct vh_buf_header {
 
 	int payload_size; /* actual payload used size */
 	struct list_head node;
+
+	/* only used by PT_OUT_DYNA_SGL*/
+	struct scatterlist *sgl;
+
 	char padding[GUARD_BAND_SZ];
 };
 
@@ -75,9 +94,9 @@ struct vh_buf_header {
 #define OUT_MEDIUM_BUF_SIZE 5120
 #define OUT_LARGE_BUF_SIZE  (64 * 1024)
 
-#define IN_BUF_NUM         100 /*64*/
-#define OUT_SMALL_BUF_NUM  200 /*64*/
-#define OUT_MEDIUM_BUF_NUM 100 /*20*/
+#define IN_BUF_NUM         100
+#define OUT_SMALL_BUF_NUM  200
+#define OUT_MEDIUM_BUF_NUM 100
 #define OUT_LARGE_BUF_NUM  10
 
 #define IN_BUF_POOL_SLOT    (GUARD_BAND_SZ + \
@@ -96,6 +115,10 @@ struct vh_buf_header {
 			     sizeof(struct vh_buf_header) + \
 			     sizeof(struct hab_header) + \
 			     OUT_LARGE_BUF_SIZE)
+#define OUT_DYNAMIC_BUF_SLOT(sizebytes)  (GUARD_BAND_SZ + \
+			     sizeof(struct vh_buf_header) + \
+			     sizeof(struct hab_header) + \
+			     (sizebytes))
 
 #define IN_POOL_SIZE (IN_BUF_POOL_SLOT * IN_BUF_NUM)
 #define OUT_SMALL_POOL_SIZE (OUT_SMALL_BUF_SLOT * OUT_SMALL_BUF_NUM)
@@ -118,6 +141,8 @@ struct hab_driver_ops virtio_ops = {
 	.habhyp_virq_tx_unregister = hgy_virq_tx_unregister,
 	.habhyp_virq_rx_unregister = hgy_virq_rx_unregister,
 	.habhyp_get_virq_num_id = hgy_get_virq_num_id,
+	.habhyp_init_virt_irq = hgy_init_virt_irq,
+	.timer_get_sclk_ticks = __arch_counter_get_cntpct,
 };
 
 struct virtio_hab *get_vh(struct virtio_device *vdev)
@@ -145,7 +170,14 @@ static struct vq_pchan *get_virtio_pchan(struct virtio_hab *vhab,
 			index, hab_driver.ndevices);
 		return NULL;
 	} else
-		return &vhab->vqpchans[index/2];
+		return &vhab->vqpchans[(unsigned int)index/2U];
+}
+
+static inline void virtio_hab_kfree(struct vh_buf_header *hd)
+{
+	void *ptr = (void *)hd - GUARD_BAND_SZ;
+
+	kfree(ptr);
 }
 
 /* vq event callback - send/out buf returns */
@@ -153,11 +185,11 @@ static void virthab_recv_txq(struct virtqueue *vq)
 {
 	struct virtio_hab *vh = get_vh(vq->vdev);
 	struct vq_pchan *vpc = get_virtio_pchan(vh, vq);
-	struct vh_buf_header *hd = NULL;
+	struct vh_buf_header *hd;
 	unsigned long flags;
 	unsigned int len;
 
-	if (!vpc)
+	if (vpc == NULL)
 		return;
 
 	trace_hab_recv_txq_start(vpc->pchan);
@@ -170,7 +202,7 @@ static void virthab_recv_txq(struct virtqueue *vq)
 
 		while ((hd = (struct vh_buf_header *)virtqueue_get_buf(vq, &len)) != NULL) {
 			if ((hd->index < 0) || (hd->pool_type < 0) ||
-				(hd->pool_type > PT_OUT_LARGE))
+				(hd->pool_type > PT_OUT_DYNA_KMALLOC))
 				pr_err("corrupted outbuf %pK %d %d %d\n",
 					hd->buf, hd->size, hd->pool_type,
 					hd->index);
@@ -206,6 +238,23 @@ static void virthab_recv_txq(struct virtqueue *vq)
 				list_add_tail(&hd->node, &vpc->l_list);
 				vpc->l_cnt++;
 				break;
+
+			case PT_OUT_DYNA_KMALLOC:
+				if (hd->index != HAB_DYNAMIC_ALLOC_INDEX)
+					pr_err("kmem buf index corrupted %pK %pK %d %d\n",
+						hd, hd->buf, hd->index,
+						hd->size);
+				virtio_hab_kfree(hd);
+				break;
+
+			case PT_OUT_DYNA_SGL:
+				if (hd->index != HAB_DYNAMIC_ALLOC_INDEX)
+					pr_err("kmem buf index corrupted %pK %pK %d %d\n",
+						hd, hd->buf, hd->index,
+						hd->size);
+				hab_sgl_free(hd->sgl);
+				break;
+
 			default:
 				pr_err("invalid pool type %d received on txq\n",
 					hd->pool_type);
@@ -228,12 +277,12 @@ static void virthab_recv_rxq(unsigned long p)
 	struct vq_pchan *vpc = get_virtio_pchan(vh, vq);
 	char *inbuf;
 	unsigned int len;
-	struct physical_channel *pchan = NULL;
+	struct physical_channel *pchan;
 	struct scatterlist sg[1];
 	int rc;
-	struct vh_buf_header *hd = NULL;
+	struct vh_buf_header *hd;
 
-	if (!vpc)
+	if (vpc == NULL)
 		return;
 
 	pchan = vpc->pchan;
@@ -268,7 +317,7 @@ static void virthab_recv_rxq(unsigned long p)
 		vpc->read_size = len;
 		vpc->read_offset = 0;
 
-		if (!pchan)
+		if (pchan == NULL)
 			pr_err("failed to find matching pchan for vq %s %pK\n",
 				vq->name, vq);
 		else {
@@ -301,7 +350,7 @@ static void virthab_recv_rxq(unsigned long p)
 			/* bundle kick? */
 			vpc->in_cnt++;
 			rc = virtqueue_kick(vq);
-			if (!rc)
+			if (rc == 0)
 				pr_err("failed to kick inbuf to PVM %d\n", rc);
 		} else {
 			pr_err("vq not ready %d\n", vpc->pchan_ready);
@@ -319,7 +368,7 @@ static void virthab_recv_rxq_task(struct virtqueue *vq)
 	struct virtio_hab *vh = get_vh(vq->vdev);
 	struct vq_pchan *vpc = get_virtio_pchan(vh, vq);
 
-	if (!vpc)
+	if (vpc == NULL)
 		return;
 
 	tasklet_hi_schedule(&vpc->task);
@@ -341,13 +390,13 @@ static void init_pool_list(void *pool, int buf_size, int buf_num,
 	ptr = pool;
 	for (i = 0; i < buf_num; i++) {
 		hd = (struct vh_buf_header *)(ptr + GUARD_BAND_SZ);
-		hd->buf = ptr + GUARD_BAND_SZ + sizeof(struct vh_buf_header);
+		hd->buf = (char *)ptr + GUARD_BAND_SZ + sizeof(struct vh_buf_header);
 		hd->size = buf_size;
 		hd->pool_type = pool_type;
 		hd->index = i;
 		hd->payload_size = 0;
 		list_add_tail(&hd->node, pool_head);
-		ptr = hd->buf + sizeof(struct hab_header) + buf_size;
+		ptr = (char *)hd->buf + sizeof(struct hab_header) + buf_size;
 		(*cnt)++;
 	}
 }
@@ -373,8 +422,8 @@ int virthab_queue_inbufs(struct virtio_hab *vh, int alloc)
 			vpc->s_pool = kmalloc(OUT_SMALL_POOL_SIZE, GFP_KERNEL);
 			vpc->m_pool = kmalloc(OUT_MEDIUM_POOL_SIZE, GFP_KERNEL);
 			vpc->l_pool = kmalloc(OUT_LARGE_POOL_SIZE, GFP_KERNEL);
-			if (!vpc->in_pool || !vpc->s_pool || !vpc->m_pool ||
-				!vpc->l_pool) {
+			if ((vpc->in_pool == NULL) || (vpc->s_pool == NULL) ||
+				(vpc->m_pool == NULL) || (vpc->l_pool == NULL)) {
 				pr_err("failed to alloc buf %lu %pK %lu %pK %lu %pK %lu %pK\n",
 					IN_POOL_SIZE, vpc->in_pool,
 					OUT_SMALL_POOL_SIZE, vpc->s_pool,
@@ -431,7 +480,7 @@ int virthab_queue_inbufs(struct virtio_hab *vh, int alloc)
 		}
 
 		ret = virtqueue_kick(vpc->vq[HAB_PCHAN_RX_VQ]);
-		if (!ret)
+		if (ret == 0)
 			pr_err("failed to kick %d %s ret %d cnt %d\n", i,
 				vpc->vq[HAB_PCHAN_RX_VQ]->name, ret,
 				vpc->in_cnt);
@@ -447,13 +496,13 @@ int virthab_init_vqs_pre(struct virtio_hab *vh)
 	struct virtqueue_info *vqs_info = vh->vqs_info;
 	char *temp;
 	int i, idx = 0;
-	struct hab_device *habdev = NULL;
+	struct hab_device *habdev;
 
 	pr_debug("2 callbacks %pK %pK\n", (void *)virthab_recv_txq,
 		(void *)virthab_recv_rxq);
 
 	habdev = find_hab_device(vh->mmid_start);
-	if (!habdev) {
+	if (habdev == NULL) {
 		pr_err("failed to locate mmid %d range %d\n",
 			vh->mmid_start, vh->mmid_range);
 		return -ENODEV;
@@ -582,24 +631,24 @@ static int virthab_alloc_mmid_device(struct virtio_hab *vh,
 
 	vh->vqs = kzalloc(sizeof(struct virtqueue *) * mmid_range *
 				HAB_PCHAN_VQ_MAX, GFP_KERNEL);
-	if (!vh->vqs)
+	if (vh->vqs == NULL)
 		return -ENOMEM;
 
 	vh->vqs_info = kzalloc(sizeof(struct virtqueue_info) * mmid_range *
 				HAB_PCHAN_VQ_MAX, GFP_KERNEL);
 
-	if (!vh->vqs_info)
+	if (vh->vqs_info == NULL)
 		return -ENOMEM;
 
 	vh->vqpchans = kcalloc(hab_driver.ndevices, sizeof(struct vq_pchan),
 				GFP_KERNEL);
-	if (!vh->vqpchans)
+	if (vh->vqpchans == NULL)
 		return -ENOMEM;
 
 	/* loop through all pchans before vq registration for name creation */
 	for (i = 0; i < mmid_range * HAB_PCHAN_VQ_MAX; i++) {
 		vh->vqs_info[i].name = kzalloc(MAX_VMID_NAME_SIZE + 2, GFP_KERNEL);
-		if (!vh->vqs_info[i].name)
+		if (vh->vqs_info[i].name == NULL)
 			return -ENOMEM;
 	}
 
@@ -617,12 +666,12 @@ int virthab_alloc(struct virtio_device *vdev, struct virtio_hab **pvh,
 	unsigned long flags;
 
 	vh = kzalloc(sizeof(*vh), GFP_KERNEL);
-	if (!vh)
+	if (vh == NULL)
 		return -ENOMEM;
 
 	ret = virthab_alloc_mmid_device(vh, mmid_start, mmid_range);
 
-	if (!ret)
+	if (ret == 0)
 		pr_debug("alloc done mmid %d range %d\n",
 				mmid_start, mmid_range);
 	else
@@ -716,7 +765,7 @@ static int virthab_probe(struct virtio_device *vdev)
 {
 	struct virtio_hab *vh = NULL;
 	int err = 0, ret = 0;
-	static int init_once, dt_pchan_cnt, pchan_cnt;
+	static int init_failed, init_done, dt_pchan_cnt, pchan_cnt;
 	int mmid_range = hab_driver.ndevices;
 	uint32_t mmid_start = hab_driver.devp[0].id;
 
@@ -725,24 +774,39 @@ static int virthab_probe(struct virtio_device *vdev)
 		return -ENODEV;
 	}
 
-	if (init_once == 0) {
-		init_once = 1;
-		dt_pchan_cnt = hab_count_pchan();
-		pr_info("Total pchannel in device tree %d\n", dt_pchan_cnt);
+	mutex_lock(&virthab_init_lock);
 
-		hab_ops_register(&virtio_ops);
-
-		/*
-		 * this function is called at the first probe call only
-		 * so char driver is created before any virtio probe.
-		 */
-		ret = hab_driver_init();
-		if (ret) {
-			pr_err("hab_driver_init failed, ret %d\n", ret);
-			return ret;
-		}
+	if (init_failed) {
+		mutex_unlock(&virthab_init_lock);
+		pr_err("abort virthab probe due to hab_driver_init failed in other threads\n");
+		return -ENODEV;
 	}
 
+	if (init_done) {
+		mutex_unlock(&virthab_init_lock);
+		goto INIT_DONE;
+	}
+
+	dt_pchan_cnt = hab_count_pchan();
+	pr_info("Total pchannel in device tree %d\n", dt_pchan_cnt);
+
+	hab_ops_register(&virtio_ops);
+
+	/*
+	 * this function is called at the first probe call only
+	 * so char driver is created before any virtio probe.
+	 */
+	ret = hab_driver_init();
+	if (ret) {
+		init_failed = 1;
+		mutex_unlock(&virthab_init_lock);
+		pr_err("hab_driver_init failed, ret %d\n", ret);
+		return ret;
+	}
+	init_done = 1;
+	mutex_unlock(&virthab_init_lock);
+
+INIT_DONE:
 	pr_info("virtio has feature %llX virtio devid %X vid %d empty %d\n",
 		vdev->features, vdev->id.device, vdev->id.vendor,
 		list_empty(&vhab_list));
@@ -795,6 +859,22 @@ static int virthab_probe(struct virtio_device *vdev)
 		mmid_start = MM_GPCE_1;
 		mmid_range = MM_GPCE_END - MM_GPCE_START - 1;
 		virthab_store_vdev(MM_GPCE_1, vdev);
+	} else if (vdev->id.device == HAB_VIRTIO_DEVICE_ID_SOCCP) {
+		mmid_start = MM_SOCCP_1;
+		mmid_range = MM_SOCCP_END - MM_SOCCP_START - 1;
+		virthab_store_vdev(MM_SOCCP_1, vdev);
+	} else if (vdev->id.device == HAB_VIRTIO_DEVICE_ID_DPRX) {
+		mmid_start = MM_DPRX_1;
+		mmid_range = MM_DPRX_END - MM_DPRX_START - 1;
+		virthab_store_vdev(MM_DPRX_1, vdev);
+	} else if (vdev->id.device == HAB_VIRTIO_DEVICE_ID_EVA) {
+		mmid_start = MM_EVA_1;
+		mmid_range = MM_EVA_END - MM_EVA_START - 1;
+		virthab_store_vdev(MM_EVA_1, vdev);
+	} else if (vdev->id.device == HAB_VIRTIO_DEVICE_ID_HSI2S) {
+		mmid_start = MM_HSI2S_1;
+		mmid_range = MM_HSI2S_END - MM_HSI2S_START - 1;
+		virthab_store_vdev(MM_HSI2S_1, vdev);
 	} else {
 		pr_err("unknown virtio device is detected %d\n",
 			vdev->id.device);
@@ -804,11 +884,11 @@ static int virthab_probe(struct virtio_device *vdev)
 	pr_debug("virtio device id %d mmid %d range %d\n",
 			vdev->id.device, mmid_start, mmid_range);
 
-	if (!virthab_pchan_avail_check(vdev->id.device, mmid_start, mmid_range))
+	if (virthab_pchan_avail_check(vdev->id.device, mmid_start, mmid_range) == 0)
 		return -EINVAL;
 
 	ret = virthab_alloc(vdev, &vh, mmid_start, mmid_range);
-	if (!ret)
+	if (ret == 0)
 		pr_debug("alloc done %d mmid %d range %d\n",
 			ret, mmid_start, mmid_range);
 	else {
@@ -897,29 +977,12 @@ static void virthab_remove(struct virtio_device *vdev)
 #ifdef CONFIG_PM_SLEEP
 static int virthab_freeze(struct virtio_device *vdev)
 {
-	struct virtio_hab *vh = get_vh(vdev);
-	unsigned long flags;
-
-	spin_lock_irqsave(&vh->mlock, flags);
-	vh->ready = false;
-	spin_unlock_irqrestore(&vh->mlock, flags);
-
-	vdev->config->del_vqs(vdev);
+	pr_debug("nothing needed to do but just printing a hint\n");
 	return 0;
 }
-
 static int virthab_restore(struct virtio_device *vdev)
 {
-	struct virtio_hab *vh = get_vh(vdev);
-	int err;
-
-	err = virthab_init_vqs(vh);
-	if (err)
-		return err;
-
-	virtio_device_ready(vdev);
-	vh->ready = true;
-	virthab_queue_inbufs(vh, 0);
+	pr_debug("nothing needed to do but just printing a hint\n");
 	return 0;
 }
 #endif
@@ -939,6 +1002,10 @@ static struct virtio_device_id id_table[] = {
 	{ HAB_VIRTIO_DEVICE_ID_VNW, VIRTIO_DEV_ANY_ID }, /* virtio vnw */
 	{ HAB_VIRTIO_DEVICE_ID_EXT, VIRTIO_DEV_ANY_ID }, /* virtio external */
 	{ HAB_VIRTIO_DEVICE_ID_GPCE, VIRTIO_DEV_ANY_ID }, /* virtio gpce */
+	{ HAB_VIRTIO_DEVICE_ID_SOCCP, VIRTIO_DEV_ANY_ID }, /* virtio soccp */
+	{ HAB_VIRTIO_DEVICE_ID_DPRX, VIRTIO_DEV_ANY_ID }, /* virtio dprx */
+	{ HAB_VIRTIO_DEVICE_ID_EVA, VIRTIO_DEV_ANY_ID }, /* virtio eva */
+	{ HAB_VIRTIO_DEVICE_ID_HSI2S, VIRTIO_DEV_ANY_ID }, /* virtio hsi2s */
 	{ 0 },
 };
 
@@ -1001,7 +1068,7 @@ static struct vh_buf_header *get_vh_buf_header(spinlock_t *lock,
 			wait_queue_head_t *wq, int *cnt,
 			int nonblocking_flag)
 {
-	struct vh_buf_header *hd = NULL;
+	struct vh_buf_header *hd;
 	unsigned long flags = *irq_flags;
 
 	if (list_empty(list) && nonblocking_flag)
@@ -1021,6 +1088,159 @@ static struct vh_buf_header *get_vh_buf_header(spinlock_t *lock,
 	return hd;
 }
 
+/**
+ * The caller needs to ensure that the memory size pointed to by pointer ptr
+ * is greater than GUARD_BAND_SZ + sizeof(struct vh_buf_header).
+ */
+static struct vh_buf_header *
+dynamic_vh_buf_header_init(void *ptr, size_t sizebytes,
+							enum pool_type_t p_type)
+{
+	struct vh_buf_header *hd;
+
+	hd = (struct vh_buf_header *)(ptr + GUARD_BAND_SZ);
+	hd->buf = ptr + GUARD_BAND_SZ + sizeof(struct vh_buf_header);
+	hd->size = sizebytes;
+	hd->pool_type = p_type;
+	/* magic number */
+	hd->index = HAB_DYNAMIC_ALLOC_INDEX;
+	hd->payload_size = 0;
+
+	return hd;
+}
+
+/* This function is only used to handle the case
+ * OUT_DYNAMIC_BUF_SLOT(payload) > PAGE_SIZE.
+ * otherwise, pls use kmalloc solution.
+ */
+static int physical_channel_send_dynamic_sgl(struct physical_channel *pchan,
+			struct hab_header *header, void *payload,
+			size_t sizebytes, gfp_t gfp)
+{
+	struct virtio_pchan_link *link =
+		(struct virtio_pchan_link *)pchan->hyp_data;
+	struct vq_pchan *vpc = link->vpc;
+	struct scatterlist *sgl;
+	struct vh_buf_header *hd;
+	unsigned int nent, nent_p = 0;
+	size_t rel_len = OUT_DYNAMIC_BUF_SLOT(sizebytes);
+	int ret = 0;
+	void *ptr;
+	size_t copy_len;
+
+	nent = round_up(rel_len, PAGE_SIZE) >> PAGE_SHIFT;
+	if (nent < 2) {
+		pr_err("payload is too small %u\n", nent);
+		return -EINVAL;
+	}
+
+	/* reduce the vring descriptor use number */
+	sgl = hab_sgl_alloc_merge(rel_len, gfp, &nent_p);
+	if (sgl == NULL) {
+		pr_err("memory alloc failed\n");
+		return -ENOMEM;
+	}
+
+	/* use sg_virt so that we can avoid kmap(sgl_copy would use it).
+	 * assumption: only support on the 64 bits OS, since 32 bits OS
+	 * sg_virt may failed.
+	 */
+	ptr = sg_virt(sgl);
+
+	/* We will put area GUARD_BAND_SZ and area vh_buf_header
+	 *  on the first page.
+	 */
+	memset(ptr, 0, PAGE_SIZE);
+	hd = dynamic_vh_buf_header_init(ptr, sizebytes, PT_OUT_DYNA_SGL);
+	hd->payload_size = sizebytes;
+	hd->sgl = sgl;
+
+	copy_len = hab_sgl_copy_buffer(sgl, header, sizeof(*header),
+				GUARD_BAND_SZ + sizeof(struct vh_buf_header), false);
+	if (copy_len != sizeof(*header)) {
+		pr_err("copy header %lu failed, copy len %zu\n",
+				sizeof(*header), copy_len);
+		ret = -EIO;
+		goto err;
+	}
+
+	copy_len = hab_sgl_copy_buffer(sgl, payload, sizebytes,
+			GUARD_BAND_SZ + sizeof(struct vh_buf_header) + sizeof(*header), false);
+	if (copy_len != sizebytes) {
+		pr_err("copy error copy len %zd, expect %zd\n",
+				copy_len, sizebytes);
+		ret = -EIO;
+		goto err;
+	}
+
+	/* we only send hab_header and payload to remote */
+	sgl->offset = GUARD_BAND_SZ + sizeof(struct vh_buf_header);
+	sgl->length -= (GUARD_BAND_SZ + sizeof(struct vh_buf_header));
+
+	ret = virtqueue_add_outbuf(vpc->vq[HAB_PCHAN_TX_VQ], sgl, nent_p,
+						hd, gfp);
+	if (ret) {
+		pr_err("failed to add outbuf %d %zd bytes\n",
+			ret, sizeof(*header) + sizebytes);
+		ret = -EIO;
+		goto err;
+	}
+
+	trace_hab_pchan_send_done(pchan);
+	ret = virtqueue_kick(vpc->vq[HAB_PCHAN_TX_VQ]);
+	if (ret == 0) {
+		pr_err("failed to kick outbuf to PVM %d\n", ret);
+		ret = -EIO;
+		goto err;
+	}
+
+	return 0;
+
+err:
+	hab_sgl_free(sgl);
+
+	return ret;
+}
+
+static void release_msg_buffer(struct vh_buf_header *hd, struct vq_pchan *vpc)
+{
+	switch (hd->pool_type) {
+	case PT_OUT_SMALL:
+		list_add_tail(&hd->node, &vpc->s_list);
+		vpc->s_cnt++;
+		break;
+
+	case PT_OUT_MEDIUM:
+		list_add_tail(&hd->node, &vpc->m_list);
+		vpc->m_cnt++;
+		break;
+
+	case PT_OUT_LARGE:
+		list_add_tail(&hd->node, &vpc->l_list);
+		vpc->l_cnt++;
+		break;
+
+	case PT_OUT_DYNA_KMALLOC:
+		virtio_hab_kfree(hd);
+		break;
+
+	default:
+		pr_err("invalid pool type %d received on txq\n",
+			hd->pool_type);
+	}
+}
+
+static struct vh_buf_header *kmalloc_get_vh_buf_header(size_t sizebytes)
+{
+	void *ptr;
+
+	ptr = kzalloc(OUT_DYNAMIC_BUF_SLOT(sizebytes), GFP_ATOMIC);
+	if (ptr == NULL)
+		return ERR_PTR(-ENOMEM);
+
+	return dynamic_vh_buf_header_init(ptr, sizebytes, PT_OUT_DYNA_KMALLOC);
+}
+
 int virtio_physical_channel_send(struct physical_channel *pchan,
 			struct hab_header *header, void *payload,
 			unsigned int flags)
@@ -1030,8 +1250,8 @@ int virtio_physical_channel_send(struct physical_channel *pchan,
 			(struct virtio_pchan_link *)pchan->hyp_data;
 	struct vq_pchan *vpc = link->vpc;
 	struct scatterlist sgout[1];
-	char *outbuf = NULL;
-	int rc;
+	char *outbuf;
+	int rc = 0;
 	unsigned long lock_flags;
 	struct vh_buf_header *hd = NULL;
 	int nonblocking_flag = flags & HABMM_SOCKET_SEND_FLAGS_NON_BLOCKING;
@@ -1039,13 +1259,6 @@ int virtio_physical_channel_send(struct physical_channel *pchan,
 	if (link->vpc == NULL) {
 		pr_err("%s: %s link->vpc not ready\n", __func__, pchan->name);
 		return -ENODEV;
-	}
-
-	if (sizebytes > OUT_LARGE_BUF_SIZE) {
-		pr_err("send size %zd overflow %d available %d %d %d\n",
-			   sizebytes, OUT_LARGE_BUF_SIZE,
-			   vpc->s_cnt, vpc->m_cnt, vpc->l_cnt);
-		return -EINVAL;
 	}
 
 	trace_hab_pchan_send_start(pchan);
@@ -1063,17 +1276,12 @@ int virtio_physical_channel_send(struct physical_channel *pchan,
 						&lock_flags, &vpc->m_list,
 						&vpc->out_wq, &vpc->m_cnt,
 						nonblocking_flag);
-		} else {
+		} else if (sizebytes <= OUT_LARGE_BUF_SIZE) {
 			hd = get_vh_buf_header(&vpc->lock[HAB_PCHAN_TX_VQ],
 						&lock_flags, &vpc->l_list,
 						&vpc->out_wq, &vpc->l_cnt,
 						nonblocking_flag);
-		}
-
-		if (IS_ERR(hd) && nonblocking_flag) {
-			spin_unlock_irqrestore(&vpc->lock[HAB_PCHAN_TX_VQ], lock_flags);
-			pr_info("get_vh_buf_header failed in non-blocking mode\n");
-			return PTR_ERR(hd);
+		} else {
 		}
 
 		if (HAB_HEADER_GET_TYPE(*header) == HAB_PAYLOAD_TYPE_PROFILE) {
@@ -1089,6 +1297,41 @@ int virtio_physical_channel_send(struct physical_channel *pchan,
 		header->sequence = ++pchan->sequence_tx;
 		header->signature = HAB_HEAD_SIGNATURE;
 
+		if (IS_ERR_OR_NULL(hd)) { /* let's try again */
+		/* We do not use kmalloc to try to apply for memory larger than a page_size. */
+			if (OUT_DYNAMIC_BUF_SLOT(sizebytes) <= PAGE_SIZE) {
+				hd = kmalloc_get_vh_buf_header(sizebytes);
+				if (IS_ERR_OR_NULL(hd)) {
+					spin_unlock_irqrestore(&vpc->lock[HAB_PCHAN_TX_VQ],
+											lock_flags);
+					pr_info("get_vh_buf_header failed, size %zu, non-block flag %d\n",
+							sizebytes, nonblocking_flag);
+					return PTR_ERR(hd);
+				}
+			} else {
+				/**
+				 * When we reach the current branch, there are two cases
+				 * 1. Call physical_channel_send with non-blocking flag and the
+				 * memory required to send the message is larger than a page.
+				 * 2. The memory required to send the message is over 64k.
+				 *
+				 * For the above two cases, the success rate of apply memory page
+				 * by page is higher than apply continuous memory using kmalloc.
+				 * Although the efficiency of memory application is reduced
+				 * when using hab_sgl_alloc_merge, the success rate will be
+				 * greatly improved. This is what we expect.
+				 */
+				rc = physical_channel_send_dynamic_sgl(pchan, header,
+							payload, sizebytes, GFP_ATOMIC);
+				spin_unlock_irqrestore(&vpc->lock[HAB_PCHAN_TX_VQ], lock_flags);
+				return rc;
+			}
+		}
+
+		/**
+		 * Single outbuf path, using a buffer allocated from static memory pool
+		 * or kmalloc
+		 */
 		outbuf = hd->buf;
 		hd->payload_size = sizebytes;
 
@@ -1099,21 +1342,32 @@ int virtio_physical_channel_send(struct physical_channel *pchan,
 
 		rc = virtqueue_add_outbuf(vpc->vq[HAB_PCHAN_TX_VQ], sgout, 1,
 							hd, GFP_ATOMIC);
-		if (!rc) {
+		if (rc == 0) {
 			trace_hab_pchan_send_done(pchan);
 			rc = virtqueue_kick(vpc->vq[HAB_PCHAN_TX_VQ]);
-			if (!rc)
+			if (rc == 0) {
+				/**
+				 * Return to caller.
+				 * We cannot release outbuf because it may be used by the
+				 * remote side (even if kick fails). We must release outbuf
+				 * safely in function virthab_recv_txq.
+				 */
 				pr_err("failed to kick outbuf to PVM %d\n", rc);
-		} else
+				rc = -EIO;
+			} else
+				rc = 0;
+		} else {
 			pr_err("failed to add outbuf %d %zd bytes\n",
 				rc, sizeof(*header) + sizebytes);
+			release_msg_buffer(hd, vpc);
+		}
 	} else {
 		pr_err("%s pchan not ready\n", pchan->name);
 		rc = -ENODEV;
 	}
 	spin_unlock_irqrestore(&vpc->lock[HAB_PCHAN_TX_VQ], lock_flags);
 
-	return 0;
+	return rc;
 }
 
 /* this read is called by hab-msg-recv from physical_channel_rx_dispatch or cb */
@@ -1130,7 +1384,7 @@ int virtio_physical_channel_read(struct physical_channel *pchan,
 		return -ENODEV;
 	}
 
-	if (!payload || !vpc->read_data) {
+	if ((payload == NULL) || (vpc->read_data == NULL)) {
 		pr_err("%s invalid parameters %pK %pK offset %d read %zd %s dev %pK\n",
 			pchan->name, payload, vpc->read_data, vpc->read_offset,
 			read_size, pchan->name, vpc);
@@ -1176,11 +1430,11 @@ void virtio_physical_channel_rx_dispatch(unsigned long data)
 static int habvirtio_pchan_create(struct hab_device *dev, char *pchan_name)
 {
 	int result = 0;
-	struct physical_channel *pchan = NULL;
-	struct virtio_pchan_link *link = NULL;
+	struct physical_channel *pchan;
+	struct virtio_pchan_link *link;
 
 	pchan = hab_pchan_alloc(dev, LOOPBACK_DOM);
-	if (!pchan) {
+	if (pchan == NULL) {
 		result = -ENOMEM;
 		goto err;
 	}
@@ -1189,7 +1443,7 @@ static int habvirtio_pchan_create(struct hab_device *dev, char *pchan_name)
 	strscpy(pchan->name, pchan_name, sizeof(pchan->name));
 
 	link = kmalloc(sizeof(*link), GFP_KERNEL);
-	if (!link) {
+	if (link == NULL) {
 		result = -ENOMEM;
 		goto err;
 	}
@@ -1260,13 +1514,13 @@ int virtio_hab_stat_log(struct physical_channel **pchans, int pchan_cnt, char *d
 	for (i = 0; i < pchan_cnt; i++) {
 		link = (struct virtio_pchan_link *)pchans[i]->hyp_data;
 		vpc = link->vpc;
-		if (!vpc) {
+		if (vpc == NULL) {
 			pr_err("%s: %s vpc not ready\n", __func__, pchans[i]->name);
 			continue;
 		}
 
-		tx_pending = !virtqueue_enable_cb(vpc->vq[HAB_PCHAN_TX_VQ]);
-		rx_pending = !virtqueue_enable_cb(vpc->vq[HAB_PCHAN_RX_VQ]);
+		tx_pending = (virtqueue_enable_cb(vpc->vq[HAB_PCHAN_TX_VQ]) == 0);
+		rx_pending = (virtqueue_enable_cb(vpc->vq[HAB_PCHAN_RX_VQ]) == 0);
 		tx_buf = virtqueue_get_buf(vpc->vq[HAB_PCHAN_TX_VQ], &tx_len);
 		rx_buf = virtqueue_get_buf(vpc->vq[HAB_PCHAN_RX_VQ], &rx_len);
 
@@ -1290,3 +1544,5 @@ int virtio_hab_hypervisor_register_post(void)
 	register_virtio_driver(&virtio_hab_driver);
 	return 0;
 }
+
+

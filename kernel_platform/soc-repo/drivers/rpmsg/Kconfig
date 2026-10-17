@@ -48,6 +48,15 @@ config QCOM_GLINK_PKT
 	  This enable the userspace clients to read and write to
 	  some glink packets channel.
 
+config RPMSG_QCOM_GLINK_SLATECOM
+	tristate "Qualcomm Technologies, Inc. SLATECOM Glink driver"
+	help
+	  Say y here to enable support for the GLINK SLATECOM driver,
+	  which provides support for using the GLINK communication protocol
+	  over SLATECOM. This transport performs marshaling of GLINK commands and
+	  data to the appropriate SLATECOM format and allows for GLINK
+	  communication with remote subsystems that are external to the SoC.
+
 config RPMSG_QCOM_SMD
 	tristate "Qualcomm Shared Memory Driver (SMD)"
 	depends on MAILBOX
@@ -67,4 +76,22 @@ config RPMSG_QCOM_GLINK_CMA
           This provides support for using the GLINK communication protocol over
           share CMA region and IPC signaling. Enables communication channels
           to remote processors.
+
+config MSM_RPM_SMD
+	tristate "RPM driver using SMD protocol"
+	select RPMSG
+	help
+	  RPM is the dedicated hardware engine for managing shared SoC
+	  resources. This config adds driver support for using SMD as a
+	  transport layer communication with RPM hardware. It also selects
+	  the MSM_MPM config that programs the MPM module to monitor interrupts
+	  during sleep modes.
+
+config RPMSG_GLINK_DS_QB
+	tristate "DS QB handling enablement"
+	depends on RPMSG_QCOM_GLINK_CMA
+	help
+	  Say y here to enable DS/QB handling logic in virtio glink driver which
+	  is used in glink passthrough feature. This will register driver's pm
+	  ops for suspend/resume callbacks to be triggered during DS/QB.
 endmenu

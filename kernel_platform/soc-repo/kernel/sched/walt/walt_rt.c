@@ -1,22 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2020-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2024, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  */
 
 #include <trace/hooks/sched.h>
 
 #include "walt.h"
 #include "trace.h"
-#if IS_ENABLED(CONFIG_OPLUS_FEATURE_SCHED_ASSIST)
-#include <sched_assist/sa_common.h>
-#endif
-#if IS_ENABLED(CONFIG_OPLUS_FEATURE_PIPELINE)
-#include <sched_assist/sa_pipeline.h>
-#endif
-#if IS_ENABLED(CONFIG_OPLUS_FEATURE_FRAME_BOOST)
-#include <frame_boost/frame_group.h>
-#endif
+
 static DEFINE_PER_CPU(cpumask_var_t, walt_local_cpu_mask);
 DEFINE_PER_CPU(u64, rt_task_arrival_time) = 0;
 static bool long_running_rt_task_trace_rgstrd;
@@ -117,32 +109,16 @@ static void walt_rt_energy_aware_wake_cpu(struct task_struct *task, struct cpuma
 	int end_index = 0;
 	bool best_cpu_lt = true;
 
-#if IS_ENABLED(CONFIG_OPLUS_FEATURE_SCHED_ASSIST)
-	bool ignore_overutil = false;
-#endif
-
 	if (unlikely(walt_disabled))
 		return;
 
 	if (!ret)
 		return; /* No targets found */
 
-#if IS_ENABLED(CONFIG_OPLUS_FEATURE_SCHED_ASSIST)
-	adjust_rt_lowest_mask(task, lowest_mask, ret, false);
-#endif
-#if IS_ENABLED(CONFIG_OPLUS_FEATURE_FRAME_BOOST)
-	if (is_fbg_task(task) && frame_boost_enabled())
-		order_index = 0;
-#endif
-
 	rcu_read_lock();
 
 	if (soc_feat(SOC_ENABLE_SILVER_RT_SPREAD_BIT) && order_index == 0)
 		end_index = 1;
-
-#if IS_ENABLED(CONFIG_OPLUS_FEATURE_SCHED_ASSIST)
-retry:
-#endif
 
 	for (cluster = 0; cluster < num_sched_clusters; cluster++) {
 		for_each_cpu_and(cpu, lowest_mask, &cpu_array[order_index][cluster]) {
@@ -159,18 +135,9 @@ retry:
 			if (sched_cpu_high_irqload(cpu))
 				continue;
 
-#if IS_ENABLED(CONFIG_OPLUS_FEATURE_SCHED_ASSIST)
-			if (!ignore_overutil) {
-#endif
 			if (__cpu_overutilized(cpu, tutil))
 				continue;
-#if IS_ENABLED(CONFIG_OPLUS_FEATURE_SCHED_ASSIST)
-			}
-#endif
-#if IS_ENABLED(CONFIG_OPLUS_FEATURE_FRAME_BOOST)
-			if (!fbg_rt_task_fits_capacity(task, cpu))
-				continue;
-#endif
+
 			util = cpu_util(cpu);
 
 			lt = (walt_low_latency_task(cpu_rq(cpu)->curr) ||
@@ -216,15 +183,6 @@ retry:
 					continue;
 			}
 
-#if IS_ENABLED(CONFIG_OPLUS_FEATURE_SCHED_ASSIST)
-			/*
-			 * If a available CPU is found in the current cluster
-			 * and a ux thread is running on this cpu, drop it!
-			 */
-			if (*best_cpu != -1 && test_task_ux(cpu_rq(cpu)->curr))
-				continue;
-#endif
-
 			best_idle_exit_latency = cpu_idle_exit_latency;
 			best_cpu_util_cum = util_cum;
 			best_cpu_util = util;
@@ -239,18 +197,6 @@ retry:
 		if (*best_cpu != -1)
 			break;
 	}
-
-#if IS_ENABLED(CONFIG_OPLUS_FEATURE_SCHED_ASSIST)
-	/*
-	 * If we pay attention to cpu_util in high load scenarios,
-	 * we often can't find a suitable CPU, so we ignore cpu_util
-	 * here and try again!
-	 */
-	if (!ignore_overutil && *best_cpu == -1) {
-		ignore_overutil = true;
-		goto retry;
-	}
-#endif
 
 	rcu_read_unlock();
 }
@@ -283,9 +229,6 @@ static inline bool walt_rt_task_fits_capacity(struct task_struct *p, int cpu)
 static inline bool walt_should_honor_rt_sync(struct rq *rq, struct task_struct *p,
 					     bool sync)
 {
-#if IS_ENABLED(CONFIG_OPLUS_FEATURE_SCHED_ASSIST)
-	sa_skip_rt_sync(rq, p, &sync);
-#endif
 	return sync &&
 		p->prio <= rq->rt.highest_prio.next &&
 		rq->rt.rt_nr_running <= 2;
@@ -315,6 +258,10 @@ static void walt_select_task_rq_rt(void *unused, struct task_struct *task, int c
 	if (unlikely(walt_disabled))
 		return;
 
+	if (walt_quiet_state)
+		return;
+
+	get_entry_instr(WALT_SELECT_TASK_RQ_RT);
 	/* For anything but wake ups, just return the task_cpu */
 	if (sd_flag != SD_BALANCE_WAKE && sd_flag != SD_BALANCE_FORK) {
 		fastpath = NON_WAKEUP;
@@ -359,16 +306,7 @@ static void walt_select_task_rq_rt(void *unused, struct task_struct *task, int c
 	 * requirement of the task - which is only important on heterogeneous
 	 * systems like big.LITTLE.
 	 */
-	/*
-	 * RT_SOFTIRQ_AWARE_SCHED feature is not available on
-	 * android-mainline. During the most recent LTS merge, the
-	 * changes were not picked up. Since WALT initialization cannot wait
-	 * until next LTS merge, provide this workaround of not using the
-	 * cpu_busy_with_softirqs function until it is present in the downstream
-	 * kernel.
-	 */
-	may_not_preempt = false;
-	//may_not_preempt = cpu_busy_with_softirqs(cpu);
+	may_not_preempt = cpu_busy_with_softirqs(cpu);
 
 	lowest_mask = this_cpu_cpumask_var_ptr(walt_local_cpu_mask);
 
@@ -386,9 +324,6 @@ static void walt_select_task_rq_rt(void *unused, struct task_struct *task, int c
 				cpumask_test_cpu(packing_cpu, task->cpus_ptr) &&
 				cpu_active(packing_cpu) &&
 				!cpu_halted(packing_cpu) &&
-#if IS_ENABLED(CONFIG_OPLUS_FEATURE_PIPELINE)
-				!oplus_pipeline_rt_skip_prime_cpu(packing_cpu) &&
-#endif
 				(cpu_rq(packing_cpu)->rt.rt_nr_running <= 1))
 				break;
 			packing_cpu++;
@@ -431,6 +366,7 @@ unlock:
 	rcu_read_unlock();
 out:
 	trace_sched_select_task_rt(task, fastpath, *new_cpu, lowest_mask);
+	update_instruction_data(WALT_SELECT_TASK_RQ_RT);
 }
 
 
@@ -447,6 +383,10 @@ static void walt_rt_find_lowest_rq(void *unused, struct task_struct *sched_ctx,
 	if (unlikely(walt_disabled))
 		return;
 
+	if (walt_quiet_state)
+		return;
+
+	get_entry_instr(WALT_RT_FIND_LOWEST_RQ);
 	wts = (struct walt_task_struct *)android_task_vendor_data(sched_ctx);
 
 	packing_cpu = walt_find_and_choose_cluster_packing_cpu(0, sched_ctx);
@@ -456,9 +396,6 @@ static void walt_rt_find_lowest_rq(void *unused, struct task_struct *sched_ctx,
 				cpumask_test_cpu(packing_cpu, sched_ctx->cpus_ptr) &&
 				cpu_active(packing_cpu) &&
 				!cpu_halted(packing_cpu) &&
-#if IS_ENABLED(CONFIG_OPLUS_FEATURE_PIPELINE)
-				!oplus_pipeline_rt_skip_prime_cpu(packing_cpu) &&
-#endif
 				(cpu_rq(packing_cpu)->rt.rt_nr_running <= 2))
 				break;
 			packing_cpu++;
@@ -486,6 +423,7 @@ static void walt_rt_find_lowest_rq(void *unused, struct task_struct *sched_ctx,
 		cpumask_andnot(lowest_mask, lowest_mask, cpu_halt_mask);
 out:
 	trace_sched_rt_find_lowest_rq(sched_ctx, fastpath, *best_cpu, lowest_mask);
+	update_instruction_data(WALT_RT_FIND_LOWEST_RQ);
 }
 
 void walt_rt_init(void)

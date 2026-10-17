@@ -8,7 +8,12 @@ load(":kleaf-scripts/android_build.bzl", "define_common_android_rules")
 load(":kleaf-scripts/ddk_uapi_headers_cc_library.bzl", "ddk_uapi_headers_cc_library")
 load(":kleaf-scripts/dtbs.bzl", "define_qcom_dtb_setup")
 load(":kleaf-scripts/generic_qtvm.bzl", "define_qtvm")
+load(":kleaf-scripts/le_build.bzl", "define_common_le_rules")
+load(":kleaf-scripts/targets/alor_le.bzl", "define_alor_le")
 load(":kleaf-scripts/targets/autogvm.bzl", "define_autogvm")
+load(":kleaf-scripts/targets/autogvmlv.bzl", "define_autogvmlv")
+load(":kleaf-scripts/targets/bengal.bzl", "define_bengal")
+load(":kleaf-scripts/targets/bengal_le.bzl", "define_bengal_le")
 load(
     ":kleaf-scripts/targets/canoe.bzl",
     "define_canoe",
@@ -16,7 +21,33 @@ load(
     "define_canoe_tuivm",
 )
 load(":kleaf-scripts/targets/canoe_vms.bzl", "define_canoe_vms")
+load(":kleaf-scripts/targets/glymur.bzl", "define_glymur")
+load(":kleaf-scripts/targets/hamoa.bzl", "define_hamoa")
+load(":kleaf-scripts/targets/hamoa_la.bzl", "define_hamoa_la")
 load(":kleaf-scripts/targets/lahaina.bzl", "define_lahaina")
+load(
+    ":kleaf-scripts/targets/malabar.bzl",
+    "define_malabar",
+    "define_malabar_oemvm",
+    "define_malabar_tuivm",
+)
+load(":kleaf-scripts/targets/malabar_vms.bzl", "define_malabar_vms")
+load(":kleaf-scripts/targets/monaco.bzl", "define_monaco")
+load(
+    ":kleaf-scripts/targets/seraph.bzl",
+    "define_seraph",
+    "define_seraph_tuivm",
+)
+load(":kleaf-scripts/targets/seraph_vms.bzl", "define_seraph_vms")
+load(
+    ":kleaf-scripts/targets/shikra.bzl",
+    "define_shikra",
+    "define_shikra_oemvm",
+    "define_shikra_tuivm",
+)
+load(":kleaf-scripts/targets/shikra_auto.bzl", "define_shikra_auto")
+load(":kleaf-scripts/targets/shikra_tiny.bzl", "define_shikra_tiny")
+load(":kleaf-scripts/targets/shikra_vms.bzl", "define_shikra_vms")
 load(
     ":kleaf-scripts/targets/sun.bzl",
     "define_sun",
@@ -25,13 +56,16 @@ load(
 )
 load(":kleaf-scripts/targets/sun_vms.bzl", "define_sun_vms")
 load(":kleaf-scripts/targets/vienna.bzl", "define_vienna")
-load(":kleaf-scripts/targets/x1p42100.bzl", "define_x1p42100")
+load(":kleaf-scripts/targets/vienna_le.bzl", "define_vienna_le")
+load(":kleaf-scripts/targets/waipio.bzl", "define_waipio")
 
 exports_files(["android/abi_gki_aarch64_qcom"])
 
 define_top_level_rules()
 
 define_common_android_rules()
+
+define_common_le_rules()
 
 define_common_upstream_files()
 
@@ -86,6 +120,12 @@ hermetic_genrule(
 )
 
 filegroup(
+    name = "soc_repo_sources",
+    srcs = glob(["**"]),
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
     name = "dt_bindings_headers",
     srcs = glob([
         "include/dt-bindings/**/*.h",
@@ -124,7 +164,10 @@ ddk_headers(
     hdrs = [
         # do not sort
         ":additional_msm_headers_aarch64_globs",
-    ],
+    ]+ select({
+        "//build/kernel/kleaf:allow_ddk_unsafe_headers_set": [":unsafe_headers_qcom_group"],
+        "//conditions:default": [],
+    }),
     linux_includes = [
         "arch/arm64/include",
         "arch/arm64/include/uapi",
@@ -141,13 +184,6 @@ ddk_headers(
         ":additional_msm_headers",
         "//common:all_headers",
     ],
-    visibility = ["//visibility:public"],
-)
-
-ddk_headers(
-    name = "pinctrl_msm_internal_headers",
-    hdrs = ["drivers/pinctrl/qcom/pinctrl-msm.h"],
-    linux_includes = ["drivers/pinctrl/qcom"],
     visibility = ["//visibility:public"],
 )
 
@@ -168,16 +204,23 @@ hermetic_genrule(
     name = "kconfig.msm.generated",
     srcs = glob(["**/Kconfig*"]),
     outs = ["Kconfig.ext"],
-    cmd = "KCONFIG_EXT_PREFIX=soc-repo/ $(location flatten_kconfig.sh) $(location Kconfig.msm) >$@",
+    cmd = "KCONFIG_EXT_PREFIX={}/ $(location flatten_kconfig.sh) $(location Kconfig.msm) >$@".format(package_name()),
     tools = ["flatten_kconfig.sh"],
 )
 
 filegroup(
     name = "unsafe_headers_qcom_group",
     srcs = [
+        "//common:arch/arm64/kvm/hyp/include/nvhe/alloc.h",
+        "//common:arch/arm64/kvm/hyp/include/nvhe/alloc_mgt.h",
+        "//common:arch/arm64/kvm/hyp/include/nvhe/gfp.h",
+        "//common:arch/arm64/kvm/hyp/include/nvhe/mem_protect.h",
+        "//common:arch/arm64/kvm/hyp/include/nvhe/memory.h",
+        "//common:arch/arm64/kvm/hyp/include/nvhe/mm.h",
+        "//common:arch/arm64/kvm/hyp/include/nvhe/pkvm.h",
+        "//common:arch/arm64/kvm/hyp/include/nvhe/refcount.h",
+        "//common:arch/arm64/kvm/hyp/include/nvhe/serial.h",
         "//common:drivers/android/binder_alloc.h",
-	"//common:kernel/irq/internals.h",
-	"//common:kernel/irq/settings.h",
         "//common:drivers/android/binder_internal.h",
         "//common:drivers/android/binder_trace.h",
         "//common:drivers/android/dbitmap.h",
@@ -235,7 +278,6 @@ filegroup(
         "//common:drivers/usb/typec/ucsi/ucsi.h",
         "//common:drivers/virt/gunyah/rsc_mgr.h",
         "//common:fs/proc/internal.h",
-        "//common:kernel/futex/futex.h",
         "//common:kernel/locking/mutex.h",
         "//common:kernel/power/power.h",
         "//common:kernel/printk/printk_ringbuffer.h",
@@ -291,15 +333,41 @@ label_flag(
     ],
 )
 
+label_flag(
+    name = "msm_kernel_build_modules",
+    build_setting_default = "//common:kernel_aarch64_modules",
+    visibility = [
+        "//private/devices/google/aarch64/qcom:__subpackages__",
+        "//private/google-modules/qcom:__subpackages__",
+        ":__subpackages__",
+    ],
+)
+
 define_canoe()
+
+define_waipio()
+
+define_alor_le()
 
 define_sun()
 
 define_autogvm()
 
+define_autogvmlv()
+
+define_bengal()
+
+define_bengal_le()
+
 define_sun_tuivm()
 
 define_sun_oemvm()
+
+define_seraph()
+
+define_seraph_tuivm()
+
+define_seraph_vms()
 
 define_sun_vms()
 
@@ -311,6 +379,34 @@ define_canoe_vms()
 
 define_vienna()
 
+define_vienna_le()
+
 define_lahaina()
 
-define_x1p42100()
+define_hamoa()
+
+define_hamoa_la()
+
+define_malabar()
+
+define_malabar_oemvm()
+
+define_malabar_tuivm()
+
+define_malabar_vms()
+
+define_monaco()
+
+define_shikra()
+
+define_shikra_auto()
+
+define_shikra_tiny()
+
+define_shikra_oemvm()
+
+define_shikra_tuivm()
+
+define_shikra_vms()
+
+define_glymur()

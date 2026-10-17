@@ -201,7 +201,7 @@ static struct clk_alpha_pll disp_cc_pll2 = {
 			.vdd_class = &vdd_mx,
 			.num_rate_max = VDD_NUM,
 			.rate_max = (unsigned long[VDD_NUM]) {
-				[VDD_LOWER_D1] = 153600000},
+				[VDD_RET] = 153600000},
 		},
 	},
 };
@@ -376,8 +376,7 @@ static struct clk_rcg2 disp_cc_esync0_clk_src = {
 		.vdd_class = &vdd_mx,
 		.num_rate_max = VDD_NUM,
 		.rate_max = (unsigned long[VDD_NUM]) {
-			[VDD_LOWER_D1] = 300000000,
-			[VDD_LOWER] = 360000000,
+			[VDD_RET] = 375000000,
 			[VDD_LOW] = 480000000,
 			[VDD_LOW_L1] = 625000000},
 	},
@@ -400,8 +399,7 @@ static struct clk_rcg2 disp_cc_esync1_clk_src = {
 		.vdd_class = &vdd_mx,
 		.num_rate_max = VDD_NUM,
 		.rate_max = (unsigned long[VDD_NUM]) {
-			[VDD_LOWER_D1] = 300000000,
-			[VDD_LOWER] = 360000000,
+			[VDD_RET] = 375000000,
 			[VDD_LOW] = 480000000,
 			[VDD_LOW_L1] = 625000000},
 	},
@@ -1060,7 +1058,7 @@ static struct clk_rcg2 disp_cc_osc_clk_src = {
 		.vdd_class = &vdd_mx,
 		.num_rate_max = VDD_NUM,
 		.rate_max = (unsigned long[VDD_NUM]) {
-			[VDD_LOWER_D1] = 38400000},
+			[VDD_RET] = 38400000},
 	},
 };
 
@@ -2206,6 +2204,7 @@ static struct qcom_cc_desc disp_cc_mx_canoe_desc = {
 static const struct of_device_id disp_cc_canoe_match_table[] = {
 	{ .compatible = "qcom,canoe-dispcc" },
 	{ .compatible = "qcom,alor-dispcc" },
+	{ .compatible = "qcom,whale-dispcc" },
 	{ }
 };
 MODULE_DEVICE_TABLE(of, disp_cc_canoe_match_table);
@@ -2214,6 +2213,12 @@ static void disp_cc_alor_fixup(struct regmap *regmap)
 {
 	disp_cc_pll0_config.config_ctl_hi_val = 0x0a8060e0;
 	disp_cc_pll1_config.config_ctl_hi_val = 0x0a8060e0;
+}
+
+static void disp_cc_whale_fixup(struct regmap *regmap)
+{
+	disp_cc_pll0_config.config_ctl_hi_val = 0x0a826060;
+	disp_cc_pll1_config.config_ctl_hi_val = 0x0a826060;
 }
 
 static int disp_cc_canoe_fixup(struct platform_device *pdev, struct regmap *regmap)
@@ -2227,6 +2232,9 @@ static int disp_cc_canoe_fixup(struct platform_device *pdev, struct regmap *regm
 
 	if (!strcmp(compat, "qcom,alor-dispcc"))
 		disp_cc_alor_fixup(regmap);
+
+	if (!strcmp(compat, "qcom,whale-dispcc"))
+		disp_cc_whale_fixup(regmap);
 
 	return 0;
 }

@@ -8,6 +8,7 @@
 
 #include <linux/kref.h>
 #include <linux/completion.h>
+#include <linux/qtee_shmbridge.h>
 
 /* Primordial Object */
 
@@ -79,6 +80,19 @@ static inline int size_of_arg(struct si_arg u[])
 	return i;
 }
 
+/* Request and Response buffer memory shared with QTEE
+ * via FFA. The buffers are allocated side-by-side.
+ */
+struct ffa_shm {
+	uint64_t ffa_handle;
+	size_t offset;
+	phys_addr_t paddr;
+	void *in_vaddr;
+	size_t in_size;
+	void *out_vaddr;
+	size_t out_size;
+};
+
 /* Context ID - It is a unique ID assigned to a invocation which is in progress.
  * Objects's dispatcher can use the ID to differentiate between concurrent calls.
  * ID [0 .. 10) are reserved, i.e. never passed to object's dispatcher.
@@ -108,9 +122,15 @@ struct si_object_invoke_ctx {
 		struct si_buffer msg;
 		phys_addr_t paddr;
 
-		/* TODO. remove after moving to tzmem allocator. */
-		struct qtee_shm shm;
 	} in, out;
+
+	union {
+		struct ffa_shm shm;
+		struct {
+			struct qtee_shm in_shm;
+			struct qtee_shm out_shm;
+		};
+	};
 };
 
 int si_object_do_invoke(struct si_object_invoke_ctx *oic,
@@ -170,8 +190,9 @@ struct si_object {
 	struct kref refcount;
 
 	enum si_object_type object_type;
-	union object_info {
+	struct object_info {
 		unsigned long object_ptr;
+		unsigned long long object_cookie;
 	} info;
 
 	struct si_object_operations *ops;
@@ -222,9 +243,7 @@ struct si_object *allocate_si_object(void);
 void free_si_object(struct si_object *object);
 
 int init_si_object_user(struct si_object *object, enum si_object_type ot,
-	struct si_object_operations *ops, const char *fmt, ...);
-struct si_object *init_si_mem_object(phys_addr_t paddr, size_t size,
-	void (*release)(void *), void *private);
+			struct si_object_operations *ops, const char *fmt, ...);
 
 int get_si_object(struct si_object *object);
 void put_si_object(struct si_object *object);
@@ -235,5 +254,6 @@ int si_core_get_client_env(struct si_object_invoke_ctx *oic, struct si_object **
 int si_core_client_env_open(struct si_object_invoke_ctx *oic, struct si_object *client_env,
 			    u32 uid_val, struct si_object **service);
 
+int process_doorbell_msg(void *buf);
 
 #endif /* _LINUX_SI_OBJECT_H__ */

@@ -24,34 +24,6 @@ struct votable;
 
 extern const char *task_event_names[];
 
-#if IS_ENABLED(CONFIG_OPLUS_FEATURE_FRAME_BOOST)
-TRACE_EVENT(ed_task_boost,
-
-	    TP_PROTO(unsigned long cpu_util, unsigned long util, unsigned int ed_task_boost_type,
-			unsigned int ed_task_boost_mid_util, unsigned int ed_task_boost_max_util),
-
-	    TP_ARGS(cpu_util, util, ed_task_boost_type, ed_task_boost_mid_util, ed_task_boost_max_util),
-
-	    TP_STRUCT__entry(
-			__field(unsigned long, cpu_util)
-			__field(unsigned long, util)
-			__field(unsigned int, ed_task_boost_type)
-			__field(unsigned int, ed_task_boost_mid_util)
-			__field(unsigned int, ed_task_boost_max_util)),
-
-	    TP_fast_assign(
-			__entry->cpu_util = cpu_util;
-			__entry->util = util;
-			__entry->ed_task_boost_type = ed_task_boost_type;
-			__entry->ed_task_boost_mid_util = ed_task_boost_mid_util;
-			__entry->ed_task_boost_max_util = ed_task_boost_max_util;),
-
-	    TP_printk("cpu_util = %lu, util = %lu, ed_task_boost_type = %d, mid_util = %d, max_util = %d",
-			__entry->cpu_util, __entry->util, __entry->ed_task_boost_type,
-			__entry->ed_task_boost_mid_util, __entry->ed_task_boost_max_util)
-);
-#endif
-
 TRACE_EVENT(sched_update_pred_demand,
 
 	TP_PROTO(struct task_struct *p, u32 runtime,
@@ -527,8 +499,8 @@ TRACE_EVENT(sched_load_to_gov,
 		__entry->cpu, __entry->policy, __entry->ed_task_pid,
 		__entry->aggr_grp_load, __entry->freq_aggr,
 		__entry->tt_load, __entry->rq_ps, __entry->grp_rq_ps,
-		__entry->nt_ps, __entry->grp_nt_ps, __entry->pl, __entry->load,
-		__entry->nbl, __entry->big_task_rotation, __entry->user_hint,
+		__entry->nt_ps, __entry->grp_nt_ps, __entry->pl, __entry->nbl,
+		__entry->load, __entry->big_task_rotation, __entry->user_hint,
 		__entry->reasons, __entry->util)
 );
 
@@ -692,6 +664,7 @@ TRACE_EVENT(sched_get_nr_running_avg,
 
 	TP_ARGS(cpu, nr, nr_misfit, nr_max, nr_scaled, nr_giant,
 		trailblazer_boost_cpu),
+
 	TP_STRUCT__entry(
 		__field(int, cpu)
 		__field(int, nr)
@@ -1268,6 +1241,11 @@ TRACE_EVENT(sched_task_util,
 		__field(bool,		sync_state)
 		__field(int,		pipeline_cpu)
 		__field(int,		yield_cnt)
+		__field(int,		event_win)
+		__field(u32,		activity_cnt)
+		__field(bool,		lst)
+		__field(u64,		gold_demand)
+		__field(u64,		prime_demand)
 	),
 
 	TP_fast_assign(
@@ -1299,9 +1277,19 @@ TRACE_EVENT(sched_task_util,
 		__entry->pipeline_cpu		=
 			((struct walt_task_struct *)android_task_vendor_data(p))->pipeline_cpu;
 		__entry->yield_cnt		= yield_cnt;
+		__entry->event_win		=
+			atomic_read(&((struct walt_task_struct *)
+					android_task_vendor_data(p))->event_windows);
+		__entry->activity_cnt		=
+			((struct walt_task_struct *)
+					android_task_vendor_data(p))->pipeline_activity_cnt;
+		__entry->lst		=
+			((struct walt_task_struct *)android_task_vendor_data(p))->lst;
+		pipeline_demand(((struct walt_task_struct *)android_task_vendor_data(p)),
+				&__entry->gold_demand, &__entry->prime_demand);
 	),
 
-	TP_printk("pid=%d comm=%s util=%lu prev_cpu=%d candidates=%#lx best_energy_cpu=%d sync=%d need_idle=%d fastpath=%d placement_boost=%d latency=%llu stune_boosted=%d is_rtg=%d rtg_skip_min=%d start_cpu=%d unfilter=%u affinity=%lx task_boost=%d low_latency=%d iowaited=%d load_boost=%d sync_state=%d pipeline_cpu=%d yield_cnt=%d",
+	TP_printk("pid=%d comm=%s util=%lu prev_cpu=%d candidates=%#lx best_energy_cpu=%d sync=%d need_idle=%d fastpath=%d placement_boost=%d latency=%llu stune_boosted=%d is_rtg=%d rtg_skip_min=%d start_cpu=%d unfilter=%u affinity=%lx task_boost=%d low_latency=%d iowaited=%d load_boost=%d sync_state=%d pipeline_cpu=%d yield_cnt=%d event_cnt=%d activity_cnt=%u lst=%d pipeline_gold_demand=%llu pipeline_prime_demand=%llu",
 		__entry->pid, __entry->comm, __entry->util, __entry->prev_cpu,
 		__entry->candidates, __entry->best_energy_cpu, __entry->sync,
 		__entry->need_idle, __entry->fastpath, __entry->placement_boost,
@@ -1309,7 +1297,9 @@ TRACE_EVENT(sched_task_util,
 		__entry->is_rtg, __entry->rtg_skip_min, __entry->start_cpu,
 		__entry->unfilter, __entry->cpus_allowed, __entry->task_boost,
 		__entry->low_latency, __entry->iowaited, __entry->load_boost,
-		__entry->sync_state, __entry->pipeline_cpu, __entry->yield_cnt)
+		__entry->sync_state, __entry->pipeline_cpu, __entry->yield_cnt,
+		__entry->event_win, __entry->activity_cnt, __entry->lst, __entry->gold_demand,
+		__entry->prime_demand)
 );
 
 /*
@@ -1377,6 +1367,7 @@ TRACE_EVENT(sched_enq_deq_task,
 
 	TP_PROTO(struct task_struct *p, bool enqueue, unsigned int cpus_allowed, bool mvp,
 		pid_t big_task_pid),
+
 	TP_ARGS(p, enqueue, cpus_allowed, mvp, big_task_pid),
 
 	TP_STRUCT__entry(

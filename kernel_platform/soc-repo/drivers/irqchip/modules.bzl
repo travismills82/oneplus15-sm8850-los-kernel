@@ -34,3 +34,13 @@ def register_modules(registry):
             "arch/arm64/gunyah/gh_arm_drv",
         ],
     )
+
+    registry.register(
+        name = "drivers/irqchip/qcom-mpm",
+        out = "qcom-mpm.ko",
+        config = "CONFIG_MPM_LEGACY",
+        srcs = [
+            # do not sort
+            "drivers/irqchip/qcom-mpm.c",
+        ],
+    )

@@ -1,3 +1,4 @@
+load(":soc_repo_path.bzl", "SOC_MODULES_REPO_PATH")
 load("@bazel_skylib//lib:paths.bzl", "paths")
 load(
     "//build/kernel/kleaf:kernel.bzl",
@@ -12,30 +13,6 @@ load(
     "define_defconfig_fragment",
     "fragment_menuconfig",
 )
-
-# zram and zsmalloc are provided by both the GKI base and the registered DDK
-# module set. Image assembly keeps the GKI copies; exclude only the duplicate
-# DDK copies from ABI extraction so STG does not merge identical symbols.
-_GKI_OWNED_ABI_MODULES = [
-    "drivers/block/zram/zram",
-    "mm/zsmalloc",
-]
-
-_OPLUS_MODULES = [
-    "//vendor/oplus/kernel/storage:ufs-oplus-dbg",
-    "//vendor/oplus/kernel/device_info/device_info/bazel:device_info",
-    "//vendor/oplus/kernel/storage:oplus_bsp_storage_io_metrics",
-    "//vendor/oplus/kernel/storage:storage_log",
-    "//vendor/oplus/kernel/storage:oplus_uprobe",
-    "//vendor/oplus/kernel/storage:oplus_file_record",
-    "//vendor/oplus/kernel/boot:oplus_bsp_dfr_qcom_enhance_watchdog",
-    "//vendor/oplus/kernel/cpu:oplus_bsp_sched_assist",
-    "//vendor/oplus/kernel/cpu:oplus_bsp_frame_boost",
-    "//vendor/oplus/kernel/mm:oplus_bsp_mm_osvelte",
-    "//vendor/oplus/kernel/cpu:cpufreq_bouncing",
-    "//vendor/oplus/kernel/cpu:oplus_bsp_task_overload",
-    "//vendor/oplus/kernel/storage:oplus_wq_dynamic_priority",
-]
 
 def signing_genrule(name, module, base_kernel, target_variant):
     native.genrule(
@@ -67,13 +44,16 @@ def create_signed_modules_group(name, signed_modules):
     )
 
 def _generate_ddk_target(
+        hooks,
         module_map,
         target_variant,
         config_fragment,
         base_kernel,
         ddk_config_deps,
         implicit_config_fragment,
-        config_path):
+        config_path,
+        library_names,
+        extra_install_modules):
     native.alias(
         name = "{}_base_kernel".format(target_variant),
         actual = base_kernel,
@@ -94,7 +74,9 @@ def _generate_ddk_target(
         defconfig = ":{}_defconfig".format(target_variant),
         kconfigs = [
             ":kconfig.msm.generated",
-            "//vendor/oplus/kernel/charger/bazel:kconfig.oplus_chg.generated"],
+            "//{}/oplus/bazel:kconfig.oplus.generated".format(SOC_MODULES_REPO_PATH),
+            "//{}/oplus/kernel/charger/bazel:kconfig.oplus_chg.generated".format(SOC_MODULES_REPO_PATH),
+        ],
         kernel_build = ":{}_base_kernel".format(target_variant),
         deps = ddk_config_deps,
         visibility = ["//visibility:public"],
@@ -119,6 +101,10 @@ def _generate_ddk_target(
         config = config_fragment,
     )
 
+    # Call registered hooks
+    for hook in hooks:
+        hook.func(target_variant)
+
     matched_configurations = []
     phony_configurations = []
     module_names = {}
@@ -132,12 +118,21 @@ def _generate_ddk_target(
                 phony_configurations.append(obj)
 
     for module in matched_configurations:
-        deps = [":{}".format(module_names.get(dep)) for dep in module.deps if module_names.get(dep)]
+        module_deps = [":{}".format(module_names.get(dep)) for dep in module.deps if module_names.get(dep)]
+        library_deps = []
+        for lib_dep in module.lib_deps:
+            label_suffix = library_names.get(lib_dep)
+            if label_suffix:
+                library_deps.append(":{}".format(label_suffix))
 
+        deps = module_deps + library_deps
+        deps += [":{}_{}".format(target_variant, dep) for dep in module.hook_deps]
         # add oplus module deps
-        for dep in module.deps:
-            if dep.startswith("//vendor/oplus"):
-                deps.append(dep.replace("{target_variant}", "{}".format(target_variant)))
+        deps += [
+            dep.replace("{target_variant}", target_variant)
+            for dep in module.deps
+            if dep.startswith("//")
+        ]
 
         src_hdrs = [src for src in module.srcs if src.endswith(".h")]
         includes = (module.includes or []) + {paths.dirname(hdr): "" for hdr in src_hdrs}.keys()
@@ -165,27 +160,15 @@ def _generate_ddk_target(
             actual = ":all_headers",
             visibility = ["//visibility:public"],
         )
-    all_modules = module_names.values() + _OPLUS_MODULES
-
     kernel_module_group(
         name = "{}_all_modules".format(target_variant),
-        srcs = all_modules,
-        visibility = ["//visibility:public"],
-    )
-
-    kernel_module_group(
-        name = "{}_abi_modules".format(target_variant),
-        srcs = [
-            label
-            for name, label in module_names.items()
-            if name not in _GKI_OWNED_ABI_MODULES
-        ] + _OPLUS_MODULES,
+        srcs = module_names.values(),
         visibility = ["//visibility:public"],
     )
 
     kernel_modules_install(
         name = "{}_modules_install".format(target_variant),
-        kernel_modules = [":{}_all_modules".format(target_variant)],
+        kernel_modules = [":{}_all_modules".format(target_variant)] + extra_install_modules,
         outs = ["modules.dep"],
     )
 
@@ -209,6 +192,10 @@ def _generate_ddk_target(
 
 def create_module_registry():
     module_map = {}
+    hooks = []
+
+    def register_hook(hook):
+        hooks.append(hook)
 
     def register(
             name,
@@ -217,6 +204,8 @@ def create_module_registry():
             config = None,
             conditional_srcs = None,
             deps = None,
+            lib_deps = None,
+            hook_deps = None,
             includes = None,
             **kwargs):
         """Register a module with the registry.
@@ -258,6 +247,14 @@ def create_module_registry():
                 # do not sort
                 "arch/arm64/gunyah/gunyah_hypercall",
               ]
+          lib_deps: List of dependent DDK libraries.
+            These are libraries defined using libraries_register.bzl.
+            The names should match the "logical" library name (e.g. "pkvm-geni-hyp-lib")
+            not the full target name. These are resolved using the `library_names` map
+            passed to `define_modules`.
+          hook_deps: List of dependent targets defined in hooks.
+            A "target_variant_" prefix is added for each dependency before
+            passing to ddk_module() (See _generate_ddk_target()).
           includes: See ddk_module() documentation.
           **kwargs: Additional ddk_module() arguments. See ddk_module() documentation.
         """
@@ -270,6 +267,8 @@ def create_module_registry():
             config = config,
             conditional_srcs = conditional_srcs,
             deps = deps or [],
+            lib_deps = lib_deps or [],
+            hook_deps = hook_deps or [],
             includes = includes,
             extra_args = kwargs,
         ))
@@ -280,7 +279,9 @@ def create_module_registry():
             base_kernel,
             ddk_config_deps = None,
             implicit_config_fragment = None,
-            config_path = None):
+            config_path = None,
+            library_names = None,
+            extra_install_modules = None):
         """Define register modules for a target/variant.
 
         Creates the following rules:
@@ -310,12 +311,18 @@ def create_module_registry():
             config_path: Path to the file which declares config_fragment.
               Optional. If set, an executable {target_variant}_menuconfig is created
               which can run menuconfig and update the config_path file.
+            library_names: A dictionary mapping logical library names to their Bazel targets.
+              This is used to resolve `lib_deps` in registered modules.
+              Typically generated by `android_build.bzl` from `library_registry.define_libraries()`.
+            extra_install_modules: Additional module targets to stage with the registered modules.
+              This does not add build dependencies to individual DDK modules.
 
         Returns:
             The list of all enabled modules *without* the target_variant/ prefix.
             e.g. ["drivers/firmware/qcom/qcom_scm"]
         """
         return _generate_ddk_target(
+            hooks,
             module_map,
             target_variant,
             config_fragment,
@@ -323,11 +330,14 @@ def create_module_registry():
             ddk_config_deps,
             implicit_config_fragment,
             config_path,
+            library_names or {},
+            extra_install_modules or [],
         )
 
     return struct(
         module_map = module_map,
         register = register,
+        register_hook = register_hook,
         get = module_map.get,
         define_modules = define_modules,
     )

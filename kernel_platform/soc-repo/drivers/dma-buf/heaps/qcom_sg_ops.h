@@ -8,7 +8,7 @@
  *	Andrew F. Davis <afd@ti.com>
  *
  * Copyright (c) 2020-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023, 2025 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  */
 
 #ifndef _QCOM_SG_OPS_H
@@ -17,7 +17,6 @@
 #include <linux/scatterlist.h>
 #include <linux/dma-heap.h>
 #include <linux/device.h>
-#include <linux/kref.h>
 #include "deferred-free-helper.h"
 #include "qcom_dma_heap_priv.h"
 
@@ -33,10 +32,6 @@ struct qcom_sg_buffer {
 	struct mem_buf_vmperm *vmperm;
 	struct deferred_freelist_item deferred_free;
 	void (*free)(struct qcom_sg_buffer *buffer);
-	struct kref kref;
-#if IS_ENABLED(CONFIG_OPLUS_FEATURE_AIZEROCOPY)
-	bool release_via_cache; /* set in qcom_sg_dmabuf_release when dmabuf valid */
-#endif
 };
 
 struct dma_heap_attachment {
@@ -85,21 +80,12 @@ int qcom_sg_vmap(struct dma_buf *dmabuf, struct iosys_map *map);
 
 void qcom_sg_vunmap(struct dma_buf *dmabuf, struct iosys_map *map);
 
-void qcom_sg_release(struct kref *kref);
+void qcom_sg_release(void *buffer);
 
 void qcom_sg_dmabuf_release(struct dma_buf *dmabuf);
 
 struct mem_buf_vmperm *qcom_sg_lookup_vmperm(struct dma_buf *dmabuf);
 
 extern struct mem_buf_dma_buf_ops qcom_sg_buf_ops;
-
-#if IS_ENABLED(CONFIG_QCOM_DMABUF_HEAPS_SYSTEM) && IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_OSVELTE)
-extern atomic64_t qcom_system_heap_total;
-inline bool is_system_heap_deferred_free(void (*free)(struct qcom_sg_buffer *buffer));
-#else /* CONFIG_QCOM_DMABUF_HEAPS_SYSTEM */
-static inline bool is_system_heap_deferred_free(void (*free)(struct qcom_sg_buffer *buffer)) {
-	return false;
-}
-#endif /* CONFIG_QCOM_DMABUF_HEAPS_SYSTEM */
 
 #endif /* _QCOM_SG_OPS_H */

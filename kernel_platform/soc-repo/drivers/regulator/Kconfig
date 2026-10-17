@@ -50,6 +50,17 @@ config REGULATOR_QCOM_RPMH
 	  control allows for voting on regulator state between multiple
 	  processors within the SoC.
 
+config REGULATOR_RPM_SMD
+	tristate "RPM SMD regulator driver"
+	depends on OF
+	depends on MSM_RPM_SMD
+	help
+	  Compile in support for the RPM SMD regulator driver which is used for
+	  setting voltages and other parameters of the various power rails
+	  supplied by some Qualcomm Technologies Inc. PMICs. The RPM SMD regulator driver should
+	  be used on systems which contain an RPM which communicates with the
+	  application processor over SMD.
+
 config REGULATOR_QCOM_AMOLED
 	tristate "Qualcomm Technologies, Inc. AMOLED support"
 	depends on SPMI
@@ -113,5 +124,21 @@ config VIRTIO_REGULATOR
           Qualcomm Technologies Inc. virtual machine. Virtio regulator can vote
           regulator for pass through peripheral devices via regulator backend in
           host.
+
+config REGULATOR_RENESAS_SLG5BLEFT
+        tristate "Renesas SLG5B Mixed signal Regulator driver"
+        help
+          This driver provides support configuring Renesas SLG5BV49293
+          customizable LDO regulators. It is used to provide power to
+          high performance camera modules and multi-rail systems. It's
+          I2C controlled and register to configure different LDO voltages.
+
+config REGULATOR_RENESAS_SLG5BRIGHT
+        tristate "Renesas SLG5B Mixed signal Regulator driver"
+        help
+          This driver provides support configuring Renesas SLG5BV49293
+          customizable LDO regulators. It is used to provide power to
+          high performance camera modules and multi-rail systems. It's
+          I2C controlled and register to configure different LDO voltages.
 
 endif

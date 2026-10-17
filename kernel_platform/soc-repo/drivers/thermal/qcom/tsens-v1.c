@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (c) 2019, Linaro Limited
- * Copyright (c) 2025, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  */
 
 #include <linux/bitops.h>
@@ -45,7 +45,7 @@ static struct tsens_legacy_calibration_format tsens_qcs404_nvmem = {
 
 static int calibrate_v1(struct tsens_priv *priv)
 {
-	u32 p1[10], p2[10];
+	u32 p1[MAX_SENSORS], p2[MAX_SENSORS];
 	u32 *qfprom_cdata;
 	int mode, ret;
 

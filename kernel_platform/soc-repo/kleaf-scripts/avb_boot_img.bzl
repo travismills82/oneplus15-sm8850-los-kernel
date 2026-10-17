@@ -42,7 +42,13 @@ def sign_boot_img(ctx):
 
     return [
         DefaultInfo(
-            files = depset([outputs]),
+            # Pass the remaining artifacts through, so that distributing them
+            # does not also pull in the unsigned boot image.
+            files = depset([outputs] + [
+                artifact
+                for artifact in ctx.files.artifacts
+                if artifact.basename != "boot.img"
+            ]),
         ),
     ]
 

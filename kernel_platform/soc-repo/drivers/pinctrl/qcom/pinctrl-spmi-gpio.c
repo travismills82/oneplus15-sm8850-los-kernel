@@ -1240,6 +1240,7 @@ static void pmic_gpio_remove(struct platform_device *pdev)
 
 static const struct of_device_id pmic_gpio_of_match[] = {
 	{ .compatible = "qcom,pm2250-gpio", .data = (void *) 10 },
+	{ .compatible = "qcom,pm4125-gpio", .data = (void *) 10 },
 	{ .compatible = "qcom,pm5100-gpio", .data = (void *) 16 },
 	/* pm660 has 13 GPIOs with holes on 1, 5, 6, 7, 8 and 10 */
 	{ .compatible = "qcom,pm660-gpio", .data = (void *) 13 },
@@ -1263,6 +1264,7 @@ static const struct of_device_id pmic_gpio_of_match[] = {
 	/* pm8150l has 12 GPIOs with holes on 7 */
 	{ .compatible = "qcom,pm8150l-gpio", .data = (void *) 12 },
 	{ .compatible = "qcom,pmc8180c-gpio", .data = (void *) 12 },
+	{ .compatible = "qcom,pmcx0102-gpio", .data = (void *) 14 },
 	{ .compatible = "qcom,pm8226-gpio", .data = (void *) 8 },
 	{ .compatible = "qcom,pm8350-gpio", .data = (void *) 10 },
 	{ .compatible = "qcom,pm8350b-gpio", .data = (void *) 8 },
@@ -1284,6 +1286,7 @@ static const struct of_device_id pmic_gpio_of_match[] = {
 	{ .compatible = "qcom,pmc8380-gpio", .data = (void *) 10 },
 	{ .compatible = "qcom,pmd8028-gpio", .data = (void *) 4 },
 	{ .compatible = "qcom,pmd802x-gpio", .data = (void *) 4 },
+	{ .compatible = "qcom,pmg1110-gpio", .data = (void *) 4 },
 	{ .compatible = "qcom,pmh0101-gpio", .data = (void *) 18 },
 	{ .compatible = "qcom,pmh0104-gpio", .data = (void *) 8 },
 	{ .compatible = "qcom,pmh0110-gpio", .data = (void *) 14 },
@@ -1311,6 +1314,7 @@ static const struct of_device_id pmic_gpio_of_match[] = {
 	{ .compatible = "qcom,pmx55-gpio", .data = (void *) 11 },
 	{ .compatible = "qcom,pmx65-gpio", .data = (void *) 16 },
 	{ .compatible = "qcom,pmx75-gpio", .data = (void *) 16 },
+	{ .compatible = "qcom,pmar2230-gpio", .data = (void *) 14 },
 	{ .compatible = "qcom,pmxr2230-gpio", .data = (void *) 12 },
 	{ .compatible = "qcom,pm8775-gpio", .data = (void *) 12 },
 	{ },

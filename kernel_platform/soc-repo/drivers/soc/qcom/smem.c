@@ -2,7 +2,7 @@
 /*
  * Copyright (c) 2015, Sony Mobile Communications AB.
  * Copyright (c) 2012-2013, The Linux Foundation. All rights reserved.
- * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  */
 
 #include <linux/hwspinlock.h>
@@ -87,7 +87,7 @@
 #define SMEM_GLOBAL_HOST	0xfffe
 
 /* Max number of processors/hosts in a system */
-#define SMEM_HOST_COUNT		25
+#define SMEM_HOST_COUNT		30
 
 /* Entry range check
  * ptr >= start : Checks if ptr is greater than the start of access region
@@ -572,6 +572,8 @@ static void *qcom_smem_get_global(struct qcom_smem *smem,
 	unsigned i;
 
 	header = smem->regions[0].virt_base;
+	if (item >= SMEM_ITEM_COUNT)
+		return ERR_PTR(-EINVAL);
 	entry = &header->toc[item];
 	if (!entry->allocated)
 		return ERR_PTR(-ENXIO);

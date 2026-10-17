@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2020-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2025 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  *
  */
 
@@ -155,6 +155,8 @@ static void gh_rm_complete_vm_setup(unsigned long action, void *msg)
 		struct gh_rm_notif_vm_status_payload *payload = msg;
 
 		if (payload->vmid > QCOM_SCM_MAX_MANAGED_VMID)
+			return;
+		if (payload->vmid == GH_SELF_VMID)
 			return;
 		if (payload->vm_status == GH_RM_VM_STATUS_READY) {
 			ret = gh_rm_get_vm_name(payload->vmid, &vm_name);
@@ -399,19 +401,48 @@ int gh_rm_get_vm_id_info(gh_vmid_t vmid)
 			ret = -EINVAL;
 		} else {
 			ret = gh_update_vm_prop_table(vm_name, &vm_prop);
-			if (ret == -EEXIST)
+			if (ret == -EEXIST) {
 				ret = 0;
+				goto free_info;
+			}
 		}
 	}
+
+	if (ret)
+		goto free_info;
+
+	kfree(id_entries);
+	return ret;
+
+free_info:
+	kfree(vm_prop.guid);
+	kfree(vm_prop.uri);
+	kfree(vm_prop.name);
+	kfree(vm_prop.sign_auth);
 
 	kfree(id_entries);
 	return ret;
 }
 EXPORT_SYMBOL_GPL(gh_rm_get_vm_id_info);
 
+/*
+ * When VMs are launched with AVF, the vIRQ to Linux IRQ mapping happens
+ * from both GKI vm_mgr and vendor gh_rm_core drivers. The Linux IRQ framework
+ * handles the duplicate conversion requests. However, freeing in both drivers
+ * can cause problems when multiple VMs are launched and tear down in parallel.
+ * The first freeing which happens in vendor driver will make the Linux IRQ
+ * available for grab and can be used by another VM that is starting. When GKI
+ * driver frees it later, it results in freeing a mapping that is active with
+ * other VM. gh_rm_core_skip_irq_cleanup will be set to true when VMs are
+ * launched with AVF on primary VM.
+ */
+static bool gh_rm_core_skip_irq_cleanup;
 static void
 gh_rm_put_irq(struct gh_vm_get_hyp_res_resp_entry *res_entry, int irq)
 {
+	if (gh_rm_core_skip_irq_cleanup)
+		return;
+
 	if (!gh_put_irq(irq))
 		gh_rm_vm_irq_release(res_entry->virq_handle);
 
@@ -954,15 +985,20 @@ static int gh_rm_status_nb_handler(struct notifier_block *this,
 	struct gh_rm_notif_vm_status_payload *vm_status_payload = data;
 	struct gh_vminfo vm_info = {0};
 	enum gh_vm_names vm_name;
-	u8 vm_status = vm_status_payload->vm_status;
+	u8 vm_status, os_status;
 	int ret;
 
-	if (cmd != GH_RM_NOTIF_VM_STATUS || vm_status_payload->vmid > QCOM_SCM_MAX_MANAGED_VMID)
+	if (cmd != GH_RM_NOTIF_VM_STATUS || !vm_status_payload ||
+	    vm_status_payload->vmid > QCOM_SCM_MAX_MANAGED_VMID ||
+	    vm_status_payload->vmid == GH_SELF_VMID)
 		return NOTIFY_DONE;
+
+	vm_status = vm_status_payload->vm_status;
+	os_status = vm_status_payload->os_status;
 
 	switch (vm_status) {
 	case GH_RM_VM_STATUS_READY:
-		pr_err("vm(%d) is ready\n", vm_status_payload->vmid);
+		pr_info("vm(%d) is ready\n", vm_status_payload->vmid);
 		ret = gh_rm_get_vm_id_info(vm_status_payload->vmid);
 		if (ret < 0) {
 			pr_err("Failed to get vmid info for vmid = %d ret = %d\n",
@@ -987,10 +1023,20 @@ static int gh_rm_status_nb_handler(struct notifier_block *this,
 		}
 		break;
 	case GH_RM_VM_STATUS_RUNNING:
-		pr_err("vm(%d) started running\n", vm_status_payload->vmid);
+		switch (os_status) {
+		case GH_RM_OS_STATUS_NONE:
+			pr_err("vm(%d) started running\n", vm_status_payload->vmid);
+			break;
+		case GH_RM_OS_STATUS_BOOT:
+			pr_err("vm(%d) os started running\n", vm_status_payload->vmid);
+			break;
+		default:
+			pr_err("Unknown notification received for vmid = %d os_status = %d\n",
+				vm_status_payload->vmid, os_status);
+		}
 		break;
 	case GH_RM_VM_STATUS_EXITED:
-		pr_err("vm(%d) exited\n", vm_status_payload->vmid);
+		pr_info("vm(%d) exited\n", vm_status_payload->vmid);
 		ret = gh_rm_get_vm_name(vm_status_payload->vmid, &vm_name);
 		if (ret < 0) {
 			pr_err("Failed to get vm name for vmid = %d ret = %d\n",
@@ -1001,7 +1047,7 @@ static int gh_rm_status_nb_handler(struct notifier_block *this,
 		if (ret < 0)
 			pr_err("Failed to get vminfo of vmname = %u\n", vm_name);
 
-		pr_err("unpopulating vm(%d) exited\n", vm_status_payload->vmid);
+		pr_info("unpopulating vm(%d) exited\n", vm_status_payload->vmid);
 		ret = gh_rm_unpopulate_hyp_res(vm_status_payload->vmid,
 				    vm_info.name);
 		if (ret < 0)
@@ -1010,8 +1056,22 @@ static int gh_rm_status_nb_handler(struct notifier_block *this,
 
 		gh_complete_vm_cleanup(vm_name);
 		break;
+	case GH_RM_VM_STATUS_INIT:
+	case GH_RM_VM_STATUS_PAUSED:
+	case GH_RM_VM_STATUS_LOAD:
+	case GH_RM_VM_STATUS_AUTH:
+	case GH_RM_VM_STATUS_RESETTING:
+	case GH_RM_VM_STATUS_RESET_FAILED:
+		pr_debug("vm(%d) is in a transitional state\n", vm_status_payload->vmid);
+		break;
+	case GH_RM_VM_STATUS_INIT_FAILED:
+		pr_info("vm(%d) initialization failed\n", vm_status_payload->vmid);
+		break;
+	case GH_RM_VM_STATUS_RESET:
+		pr_info("vm(%d) has been reset\n", vm_status_payload->vmid);
+		break;
 	default:
-		pr_err("Unknown notification receieved for vmid = %d vm_status = %d\n",
+		pr_err("Unknown notification received for vmid = %d vm_status = %d\n",
 				vm_status_payload->vmid, vm_status);
 	}
 
@@ -1045,6 +1105,8 @@ static int gh_vm_status_nb_handler(struct notifier_block *this,
 				*vmid, ret);
 			return NOTIFY_DONE;
 		}
+		if (*vmid == GH_SELF_VMID)
+			return NOTIFY_DONE;
 		ret = gh_rm_get_vm_name(*vmid, &vm_name);
 		if (ret < 0) {
 			pr_err("Failed to get vm name for vmid = %d ret = %d\n",
@@ -1063,6 +1125,8 @@ static int gh_vm_status_nb_handler(struct notifier_block *this,
 		break;
 	}
 	case GH_VM_EXITED: {
+		if (*vmid == GH_SELF_VMID)
+			return NOTIFY_DONE;
 		ret = gh_rm_get_vm_name(*vmid, &vm_name);
 		if (ret < 0) {
 			pr_err("Failed to get vm name for vmid = %d ret = %d\n", *vmid, ret);
@@ -1222,6 +1286,7 @@ static int gh_vm_probe(struct device *dev, struct device_node *hyp_root)
 #ifdef CONFIG_QTVM_WITH_AVF
 		gh_rm_register_notifier(&gh_rm_status_nb);
 		gh_register_vm_notifier(&gh_vm_status_nb);
+		gh_rm_core_skip_irq_cleanup = true;
 #endif
 		gh_rm_core_initialized = true;
 	} else {

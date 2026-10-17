@@ -29,6 +29,11 @@ enum hab_page_list_type {
 	HAB_PAGE_LIST_EXPORT_USER
 };
 
+enum unimp_msg_sent_timing {
+	UNIMP_CALL = 0x0, /* unimport msg sent when imp_hyp_unmap return success */
+	PGLIST_DESTROY    /* unimport msg sent when dma-buf file release is triggered */
+};
+
 struct pages_list {
 	struct list_head list;
 	struct page **pages;
@@ -39,6 +44,7 @@ struct pages_list {
 	int32_t vcid;
 	struct physical_channel *pchan;
 	uint32_t type;
+	enum unimp_msg_sent_timing unimp_timing;
 	struct kref refcount;
 };
 
@@ -63,7 +69,8 @@ static struct pages_list *pages_list_create(
 		(struct compressed_pfns *)exp->payload;
 	struct pages_list *pglist = NULL;
 	unsigned long pfn;
-	int i, j, k = 0, size;
+	int i, j, k = 0;
+	size_t size;
 	unsigned long region_total_page = 0;
 
 	if (!pfn_table)
@@ -77,7 +84,7 @@ static struct pages_list *pages_list_create(
 		return ERR_PTR(-EINVAL);
 	}
 
-	size = exp->payload_count * sizeof(struct page *);
+	size = (size_t)exp->payload_count * sizeof(struct page *);
 	pages = vmalloc(size);
 	if (!pages)
 		return ERR_PTR(-ENOMEM);
@@ -95,20 +102,20 @@ static struct pages_list *pages_list_create(
 			goto err_region_total_page;
 		}
 
-		region_total_page += pfn_table->region[i].size;
-		if (region_total_page > exp->payload_count) {
+		region_total_page += (unsigned long)pfn_table->region[i].size;
+		if (region_total_page > (unsigned long)exp->payload_count) {
 			pr_err("payload_count %d but region_total_page %lu\n",
 				exp->payload_count, region_total_page);
 			goto err_region_total_page;
 		}
 
 		for (j = 0; j < pfn_table->region[i].size; j++) {
-			pages[k] = pfn_to_page(pfn+j);
+			pages[k] = pfn_to_page(pfn + (unsigned long)j);
 			k++;
 		}
 		pfn += pfn_table->region[i].size + pfn_table->region[i].space;
 	}
-	if (region_total_page != exp->payload_count) {
+	if (region_total_page != (unsigned long)exp->payload_count) {
 		pr_err("payload_count %d and region_total_page %lu are not equal\n",
 			exp->payload_count, region_total_page);
 		goto err_region_total_page;
@@ -150,8 +157,10 @@ static void pages_list_remove(struct pages_list *pglist)
 static void pages_list_destroy(struct kref *refcount)
 {
 	int i = 0;
+	int ret;
 	struct pages_list *pglist = container_of(refcount,
 				struct pages_list, refcount);
+	struct hab_header header = HAB_HEADER_INITIALIZER;
 
 	if (pglist->vmapping) {
 		vunmap(pglist->vmapping);
@@ -164,11 +173,26 @@ static void pages_list_destroy(struct kref *refcount)
 	else if (pglist->type == HAB_PAGE_LIST_EXPORT_USER) {
 		for (i = 0; i < pglist->npages; i++)
 			put_page(pglist->pages[i]);
+	} else {
+		/* HAB_PAGE_LIST_EXPORT_KERNEL: kernel pages, no explicit release needed */
 	}
 
+	if (pglist->unimp_timing == PGLIST_DESTROY) {
+		HAB_HEADER_SET_TYPE(header, HAB_PAYLOAD_TYPE_UNIMPORT);
+		HAB_HEADER_SET_SIZE(header, sizeof(uint32_t));
+		HAB_HEADER_SET_ID(header, HAB_VCID_UNIMPORT);
+		HAB_HEADER_SET_SESSION_ID(header, HAB_SESSIONID_UNIMPORT);
+		ret = physical_channel_send(pglist->pchan, &header, &pglist->export_id,
+				HABMM_SOCKET_SEND_FLAGS_NON_BLOCKING);
+		if (ret)
+			pr_err("unimp msg sent fail %d, vcid %x, expid %d, pg nr %ld\n",
+				ret, pglist->vcid, pglist->export_id, pglist->npages);
+		else
+			pr_debug("unimp msg sent, expid %d, vcid %x, pg nr %ld\n",
+				pglist->export_id, pglist->vcid, pglist->npages);
+	}
 
 	vfree(pglist->pages);
-
 	kfree(pglist);
 }
 
@@ -202,6 +226,19 @@ static struct pages_list *pages_list_lookup(
 	spin_unlock_bh(&hab_driver.imp_lock);
 
 	return NULL;
+}
+
+void habmem_defer_unimp_sent(struct export_desc *export)
+{
+	struct dma_buf *dmabuf;
+	struct pages_list *pglist;
+
+	dmabuf = (struct dma_buf *)export->kva;
+	pglist = (struct pages_list *)dmabuf->priv;
+	pglist->unimp_timing = PGLIST_DESTROY;
+
+	/* decrease the file counter added by hab import from user space */
+	dma_buf_put(dmabuf);
 }
 
 static int match_file(const void *p, struct file *file, unsigned int fd)
@@ -321,7 +358,7 @@ static struct dma_buf *habmem_get_dma_buf_from_uva(unsigned long address,
 	kref_init(&pglist->refcount);
 
 	exp_info.ops = &dma_buf_ops;
-	exp_info.size = pglist->npages << PAGE_SHIFT;
+	exp_info.size = (size_t)pglist->npages << PAGE_SHIFT;
 	exp_info.flags = O_RDWR;
 	exp_info.priv = pglist;
 	dmabuf = dma_buf_export(&exp_info);
@@ -342,11 +379,43 @@ err:
 	return ERR_PTR(ret);
 }
 
+static int habmem_prepare_lb_mem(struct export_desc_super *exp_super,
+		struct mem_share_metadata *metadata,
+		uint32_t *data_size)
+{
+	struct pages_list *pglist = NULL;
+	struct page **pages = NULL;
+	struct exp_platform_data *platform_data =
+		(struct exp_platform_data *) exp_super->platform_data;
+	struct dma_buf *dmabuf = (struct dma_buf *) platform_data->dmabuf;
+
+	if (dmabuf->ops != &dma_buf_ops) {
+		pr_err("cannot loopback unrecognized memory buf, not imported by HAB\n");
+		return -EINVAL;
+	}
+
+	pglist = dmabuf->priv;
+	pages = pglist->pages;
+	if (pglist->type != HAB_PAGE_LIST_IMPORT) {
+		pr_err("cannot loopback export type memory buf\n");
+		return -EINVAL;
+	}
+
+	metadata->lb_mem.origin_exp_id = pglist->export_id;
+	metadata->lb_mem.origin_mmid = pglist->pchan->habdev->id;
+	metadata->lb_mem.reserved = 0U;
+	pr_debug("assemble lb memory, origin expid %u, mmid %d\n",
+		pglist->export_id, pglist->pchan->habdev->id);
+	*data_size = (uint32_t)sizeof(struct lb_mem_info);
+
+	return 0;
+}
+
 static int habmem_compress_pfns(
 		struct export_desc_super *exp_super,
-		struct compressed_pfns *pfns,
+		struct mem_share_metadata *metadata,
 		uint32_t *data_size,
-		int mmid_grp_index)
+		int dev_idx)
 {
 	int ret = 0;
 	struct exp_platform_data *platform_data =
@@ -365,7 +434,7 @@ static int habmem_compress_pfns(
 	unsigned long page_offset;
 	uint32_t spage_size = 0;
 
-	if (IS_ERR_OR_NULL(dmabuf) || !pfns || !data_size)
+	if (IS_ERR_OR_NULL(dmabuf) || !metadata || !data_size)
 		return -EINVAL;
 
 	pr_debug("dmabuf size: %lu, page_count: %d\n", dmabuf->size, page_count);
@@ -379,7 +448,7 @@ static int habmem_compress_pfns(
 
 	/* DMA buffer from fd */
 	if (dmabuf->ops != &dma_buf_ops) {
-		attach = dma_buf_attach(dmabuf, hab_driver.dev[mmid_grp_index]);
+		attach = dma_buf_attach(dmabuf, hab_driver.dev[dev_idx]);
 		if (IS_ERR_OR_NULL(attach)) {
 			pr_err("dma_buf_attach failed %d\n", -EBADF);
 			ret = -EBADF;
@@ -410,59 +479,63 @@ static int habmem_compress_pfns(
 
 			page = sg_page(s);
 			if (j == 0) {
-				pfns->first_pfn = page_to_pfn(nth_page(page,
+				metadata->pfns.first_pfn = page_to_pfn(nth_page(page,
 							page_offset));
 			} else {
-				pfns->region[j-1].space =
+				metadata->pfns.region[j-1].space =
 					page_to_pfn(nth_page(page, 0)) -
 					page_to_pfn(pre_page) - 1;
 				pr_debug("j %d, space %d, ppfn %lu, pfn %lu\n",
-					j, pfns->region[j-1].space,
+					j, metadata->pfns.region[j-1].space,
 					page_to_pfn(pre_page),
 					page_to_pfn(nth_page(page, 0)));
 			}
 
-			pfns->region[j].size = spage_size - page_offset;
-			if (pfns->region[j].size >= page_count) {
-				pfns->region[j].size = page_count;
-				pfns->region[j].space = 0;
+			metadata->pfns.region[j].size = spage_size - page_offset;
+			if (metadata->pfns.region[j].size >= page_count) {
+				metadata->pfns.region[j].size = page_count;
+				metadata->pfns.region[j].space = 0;
 				break;
 			}
 
-			page_count -= pfns->region[j].size;
-			pre_page = nth_page(page, pfns->region[j].size - 1);
+			page_count -= metadata->pfns.region[j].size;
+			pre_page = nth_page(page, metadata->pfns.region[j].size - 1);
 			page_offset = 0;
 			j++;
 		}
-		pfns->nregions = j+1;
+		metadata->pfns.nregions = j+1;
 	} else {
 		pglist = dmabuf->priv;
 		pages = pglist->pages;
+		if (pglist->type == HAB_PAGE_LIST_IMPORT) {
+			pr_err("missing loopback flag? or incorrect memory handle\n");
+			return -EINVAL;
+		}
 
-		pfns->first_pfn = page_to_pfn(pages[0]);
+		metadata->pfns.first_pfn = page_to_pfn(pages[0]);
 		for (i = 1; i < page_count; i++) {
 			if ((page_to_pfn(pages[i]) - 1) ==
 					page_to_pfn(pages[i-1])) {
 				region_size++;
 			} else {
-				pfns->region[j].size = region_size;
-				pfns->region[j].space =
+				metadata->pfns.region[j].size = region_size;
+				metadata->pfns.region[j].space =
 					page_to_pfn(pages[i]) -
 					page_to_pfn(pages[i-1]) - 1;
 				j++;
 				region_size = 1;
 			}
 		}
-		pfns->region[j].size = region_size;
-		pfns->region[j].space = 0;
-		pfns->nregions = j+1;
+		metadata->pfns.region[j].size = region_size;
+		metadata->pfns.region[j].space = 0;
+		metadata->pfns.nregions = j+1;
 	}
 
 	*data_size = sizeof(struct compressed_pfns) +
-		sizeof(struct region) * pfns->nregions;
+		sizeof(struct region) * (size_t)metadata->pfns.nregions;
 
 	pr_debug("first_pfn %lu, nregions %d, data_size %u\n",
-			pfns->first_pfn, pfns->nregions, *data_size);
+			metadata->pfns.first_pfn, metadata->pfns.nregions, *data_size);
 	return 0;
 err:
 	if (!IS_ERR_OR_NULL(attach)) {
@@ -488,14 +561,24 @@ static int habmem_add_export_compress(struct virtual_channel *vchan,
 	struct export_desc *exp = NULL;
 	struct export_desc_super *exp_super = NULL;
 	struct exp_platform_data *platform_data = NULL;
-	struct compressed_pfns *pfns = NULL;
-	uint32_t sizebytes = sizeof(*exp_super) +
-				sizeof(struct compressed_pfns) +
-				page_count * sizeof(struct region);
+	struct mem_share_metadata *metadata = NULL;
+	uint32_t sizebytes;
 
-	pr_debug("exp_desc %zu, comp_pfns %zu, region %zu, page_count %d\n",
+	/*
+	 * Add 1 byte to the export desc size to avoid mismatch in size
+	 * coming from PVM/Host side, as to resolve error for payload[1]
+	 * in 6.12 kernel, as it is converted to payload[]
+	 */
+	if ((unsigned int)flags & HABMM_EXP_MEM_TYPE_LOOPBACK)
+		sizebytes = (uint32_t)sizeof(*exp_super) + 1 + (uint32_t)sizeof(struct lb_mem_info);
+	else
+		sizebytes = sizeof(*exp_super) + 1 +
+				sizeof(struct compressed_pfns) +
+				(size_t)page_count * sizeof(struct region);
+
+	pr_debug("exp_desc %zu, comp_metadata  %zu, region %zu, page_count %d\n",
 		sizeof(struct export_desc),
-		sizeof(struct compressed_pfns),
+		sizeof(struct mem_share_metadata),
 		sizeof(struct region), page_count);
 
 	exp_super = habmem_add_export(vchan,
@@ -520,10 +603,21 @@ static int habmem_add_export_compress(struct virtual_channel *vchan,
 	exp_super->platform_data = (void *)platform_data;
 	kref_init(&exp_super->refcount);
 
-	pfns = (struct compressed_pfns *)&exp->payload[0];
-	ret = habmem_compress_pfns(exp_super, pfns, payload_size, vchan->ctx->mmid_grp_index);
+	metadata = (struct mem_share_metadata  *)&exp->payload[0];
+	if (unlikely(exp_super->is_loopback))
+		ret = habmem_prepare_lb_mem(exp_super, metadata, payload_size);
+	else
+	/*
+	 * always use the mmid group specific device to attach to the dma-buf
+	 * the mmid_grp_index in ctx cannot be used because:
+	 * 1. It cannot distinguish if the client is in the kernel or accessed from /dev/hab due to
+	 *    lack of permission to the specific /dev/hab-xxx entry (fallback).
+	 * 2. The dma_coherent attribute cannot be managed per MMID group.
+	 */
+		ret = habmem_compress_pfns(exp_super, metadata, payload_size,
+			(vchan->pchan->habdev->id / 100));
 	if (ret) {
-		pr_err("hab compressed pfns failed %d\n", ret);
+		pr_err("%x hab compressed metadata failed %d\n", vchan->id, ret);
 		*payload_size = 0;
 		goto err_compress_pfns;
 	}
@@ -564,13 +658,16 @@ int habmem_hyp_grant_user(struct virtual_channel *vchan,
 	struct dma_buf *dmabuf = NULL;
 	unsigned long off = 0;
 
-	if (HABMM_EXP_MEM_TYPE_DMA & flags)
+	if (HABMM_EXP_MEM_TYPE_DMA & (unsigned int)flags)
 		dmabuf = habmem_get_dma_buf_from_va(address,
 					page_count, &off);
-	else if (HABMM_EXPIMP_FLAGS_FD & flags)
+	else if (HABMM_EXPIMP_FLAGS_FD & (unsigned int)flags)
 		dmabuf = dma_buf_get(address);
-	else
+	else if ((HABMM_EXP_MEM_TYPE_LOOPBACK & (unsigned int)flags) == 0U)
 		dmabuf = habmem_get_dma_buf_from_uva(address, page_count);
+	else
+		pr_err("%x Cannot loopback memory via uva without existing dma-buf\n",
+			vchan->id);
 
 	if (IS_ERR_OR_NULL(dmabuf))
 		return -EINVAL;
@@ -609,13 +706,13 @@ int habmem_hyp_grant(struct virtual_channel *vchan,
 	struct pages_list *pglist = NULL;
 	DEFINE_DMA_BUF_EXPORT_INFO(exp_info);
 
-	if (HABMM_EXPIMP_FLAGS_DMABUF & flags) {
+	if (HABMM_EXPIMP_FLAGS_DMABUF & (unsigned int)flags) {
 		dmabuf = (struct dma_buf *)address;
 		if (dmabuf)
 			get_dma_buf(dmabuf);
-	} else if (HABMM_EXPIMP_FLAGS_FD & flags)
+	} else if (HABMM_EXPIMP_FLAGS_FD & (unsigned int)flags) {
 		dmabuf = dma_buf_get(address);
-	else { /*Input is kva;*/
+	} else if ((HABMM_EXP_MEM_TYPE_LOOPBACK & (unsigned int)flags) == 0U) { /*Input is kva;*/
 		pages = vmalloc((page_count *
 				sizeof(struct page *)));
 		if (!pages) {
@@ -646,10 +743,13 @@ int habmem_hyp_grant(struct virtual_channel *vchan,
 		}
 
 		exp_info.ops = &dma_buf_ops;
-		exp_info.size = pglist->npages << PAGE_SHIFT;
+		exp_info.size = (size_t)pglist->npages << PAGE_SHIFT;
 		exp_info.flags = O_RDWR;
 		exp_info.priv = pglist;
 		dmabuf = dma_buf_export(&exp_info);
+	} else {
+		pr_err("%x Cannot loopback memory via kva without existing dma-buf\n",
+			vchan->id);
 	}
 
 	if (IS_ERR_OR_NULL(dmabuf)) {
@@ -682,7 +782,13 @@ int habmem_exp_release(struct export_desc_super *exp_super)
 	struct dma_buf_attachment *attach = NULL;
 	struct sg_table *sg_table = NULL;
 
-	if (!IS_ERR_OR_NULL(dmabuf)) {
+	if (IS_ERR_OR_NULL(dmabuf)) {
+		pr_debug("release failed, dmabuf is null!!!\n");
+		kfree(platform_data);
+		return 0;
+	}
+
+	if (!exp_super->is_loopback) {
 		attach = (struct dma_buf_attachment *) platform_data->attach;
 		if (!IS_ERR_OR_NULL(attach)) {
 			sg_table = (struct sg_table *) platform_data->sg_table;
@@ -692,9 +798,8 @@ int habmem_exp_release(struct export_desc_super *exp_super)
 						DMA_BIDIRECTIONAL);
 			dma_buf_detach(dmabuf, attach);
 		}
-		dma_buf_put(dmabuf);
-	} else
-		pr_debug("release failed, dmabuf is null!!!\n");
+	}
+	dma_buf_put(dmabuf);
 
 	kfree(platform_data);
 	return 0;
@@ -804,7 +909,7 @@ static vm_fault_t hab_map_fault(struct vm_fault *vmf)
 
 	pglist  = vma->vm_private_data;
 
-	if (page_idx < 0 || page_idx >= pglist->npages) {
+	if (page_idx < 0 || (unsigned long)page_idx >= (unsigned long)pglist->npages) {
 		pr_err("Out of page array! page_idx %d, pg cnt %ld\n",
 			page_idx, pglist->npages);
 		return VM_FAULT_SIGBUS;
@@ -955,6 +1060,59 @@ static struct dma_buf_ops dma_buf_ops = {
 	.vunmap = hab_mem_dma_buf_vunmap,
 };
 
+static struct dma_buf *habmem_get_lb_dmabuf(struct export_desc *exp)
+{
+	struct dma_buf *dmabuf = NULL;
+	struct export_desc *origin_exp_desc;
+	struct export_desc_super *origin_exp_super;
+	uint32_t origin_exp_id;
+	int origin_mmid;
+	struct mem_share_metadata *metadata;
+	struct hab_device *dev;
+	struct physical_channel *origin_pchan;
+	struct exp_platform_data *platform_data = NULL;
+
+	/* extract exp_id and pchan */
+	metadata = (struct mem_share_metadata *)exp->payload;
+	origin_exp_id = metadata->lb_mem.origin_exp_id;
+	origin_mmid = metadata->lb_mem.origin_mmid;
+	pr_debug("importing lb mem, origin expid %u, mmid %d\n", origin_exp_id, origin_mmid);
+	dev = find_hab_device(origin_mmid);
+	if (dev == NULL) {
+		pr_err("invalid mmid %d, hab dev not found\n", origin_mmid);
+		goto out;
+	}
+
+	/* loopback memory is received from BE, FE does not care the VMID due to always 0 */
+	origin_pchan = hab_pchan_find_domid(dev, HABCFG_VMID_DONT_CARE);
+	if (origin_pchan == NULL) {
+		pr_err("pchan not found for lb mem\n");
+		goto out;
+	}
+
+	spin_lock_bh(&origin_pchan->expid_lock);
+	origin_exp_desc = idr_find(&origin_pchan->expid_idr, origin_exp_id);
+	if (origin_exp_desc == NULL) {
+		spin_unlock_bh(&origin_pchan->expid_lock);
+		pr_err("lb mem not found, expid %u, mmid %d\n", origin_exp_id, origin_mmid);
+		hab_pchan_put(origin_pchan);
+		goto out;
+	}
+
+	origin_exp_super = container_of(origin_exp_desc, struct export_desc_super, exp);
+	platform_data = (struct exp_platform_data *)origin_exp_super->platform_data;
+	dmabuf = platform_data->dmabuf;
+	if (dmabuf)
+		get_dma_buf(dmabuf);
+	else
+		pr_err("invalid exp desc, NULL dmabuf pointer\n");
+	spin_unlock_bh(&origin_pchan->expid_lock);
+	hab_pchan_put(origin_pchan);
+
+out:
+	return dmabuf;
+}
+
 static struct dma_buf *habmem_import_to_dma_buf(
 	struct physical_channel *pchan,
 	struct export_desc *exp,
@@ -962,34 +1120,86 @@ static struct dma_buf *habmem_import_to_dma_buf(
 {
 	struct pages_list *pglist = NULL;
 	struct dma_buf *dmabuf = NULL;
+	struct export_desc_super *exp_super = container_of(exp, struct export_desc_super, exp);
 	DEFINE_DMA_BUF_EXPORT_INFO(exp_info);
 
-	pglist = pages_list_lookup(exp->export_id, pchan, true);
-	if (pglist)
-		goto buffer_ready;
+	if (exp_super->is_loopback) {
+		dmabuf = habmem_get_lb_dmabuf(exp);
+	} else {
+		pglist = pages_list_lookup(exp->export_id, pchan, true);
+		if (pglist)
+			goto buffer_ready;
 
-	pglist = pages_list_create(exp, userflags);
-	if (IS_ERR(pglist))
-		return (void *)pglist;
+		pglist = pages_list_create(exp, userflags);
+		if (IS_ERR(pglist))
+			return (void *)pglist;
 
-	pages_list_add(pglist);
-	pglist->type = HAB_PAGE_LIST_IMPORT;
+		pages_list_add(pglist);
+		pglist->type = HAB_PAGE_LIST_IMPORT;
 
 buffer_ready:
-	exp_info.ops = &dma_buf_ops;
-	exp_info.size = pglist->npages << PAGE_SHIFT;
-	exp_info.flags = O_RDWR;
-	exp_info.priv = pglist;
-	dmabuf = dma_buf_export(&exp_info);
-	if (IS_ERR(dmabuf)) {
-		pr_err("export to dmabuf failed, exp %d, pchan %s\n",
-			exp->export_id, pchan->name);
-		pages_list_put(pglist);
+		exp_info.ops = &dma_buf_ops;
+		exp_info.size = (size_t)pglist->npages << PAGE_SHIFT;
+		exp_info.flags = O_RDWR;
+		exp_info.priv = pglist;
+		dmabuf = dma_buf_export(&exp_info);
+		if (IS_ERR(dmabuf)) {
+			pr_err("export to dmabuf failed, exp %d, pchan %s\n",
+				exp->export_id, pchan->name);
+			pages_list_put(pglist);
+		}
 	}
 
 	return dmabuf;
 }
 
+/*
+ * dma_buf is created here during hab import.
+ * Below are the typical lifecycles of the dma_buf file.
+ *
+ * From khab:
+ *
+ * - [HAB driver] initialized in habmem_imp_hyp_map (1) -----------------------------|
+ * - [HAB client] usage in kernel by HAB client, ex. smmu map (1 -> 2) -----------|  |
+ * - [HAB client] usage finish, ex. smmu unmap (2 -> 1) --------------------------|  |
+ * - [HAB driver] habmm_unimport called from HAB client                              |
+ * - [HAB driver] dma_buf_put in habmem_imp_hyp_unmap (1 -> 0) ----------------------|
+ *
+ * or
+ *
+ * - [HAB driver] initialized in habmem_imp_hyp_map (1) -----------------------------|
+ * - [HAB client] alloc fd for the dma-buf file                                      |
+ * - [HAB client] increase dma-buf file count (1 -> 2) ---------------------------|  |
+ * - [HAB client] share it to user space                                          |  |
+ * - [HAB client] im/explicitly close fd via close or process gone (2 -> 1) ------|  |
+ * - [HAB driver] habmm_unimport called from HAB client                              |
+ * - [HAB driver] dma_buf_put in habmem_imp_hyp_unmap (1 -> 0) ----------------------|
+ *
+ * From uhab:
+ *
+ * - [HAB driver] initialized in habmem_imp_hyp_map (1) =============================|
+ * - [HAB driver] alloc fd                                                           |
+ * - [HAB driver] increase the file count in habmem_imp_hyp_map (1 -> 2) ---------|  |
+ * - [uhab]       return fd to HAB client                                         |  |
+ * - [HAB client] usage in user space, ex. mmap (2 -> 3) ----------------------|  |  |
+ * - [HAB client] usage finish, ex. munmap (3 -> 2) ---------------------------|  |  |
+ * - [HAB driver] habmm_unimport called from HAB client                           |  |
+ * - [HAB driver] dma_buf_put in habmem_imp_hyp_unmap (2 -> 1) ======================|
+ * - [uhab]       close fd (1 -> 0) ----------------------------------------------|
+ *
+ * or
+ *
+ * - [HAB driver] initialized in habmem_imp_hyp_map (1) =============================|
+ * - [HAB driver] alloc fd                                                           |
+ * - [HAB driver] increase the file count in habmem_imp_hyp_map (1 -> 2) ---------|  |
+ * - [uhab]       return fd to HAB client                                         |  |
+ * - [HAB client] usage in user space, ex. mmap (2 -> 3) -------------------------|  |
+ * - [HAB client] process exit/crash/get killed without unimp and munmap          |  |
+ * - [kernel]     cleanup process resource(close fd, unmap) (3 -> 1) -------------|  |
+ * - [HAB driver] hab_ctx_free to cleanup resources                                  |
+ * - [HAB driver] dma_buf_put in habmem_imp_hyp_unmap (1 -> 0) ======================|
+ *
+ */
 int habmem_imp_hyp_map(void *imp_ctx, struct hab_import *param,
 		struct export_desc *exp, int kernel)
 {
@@ -1011,36 +1221,85 @@ int habmem_imp_hyp_map(void *imp_ctx, struct hab_import *param,
 			return -EINVAL;
 		}
 		param->kva = (uint64_t)fd;
+		/*
+		 * Additionally increase the count by one if import request is from user space.
+		 * Because HAB driver allocates a fd for the client. Without the additional file
+		 * count, once the dma-buf is exposed to user space through fd, there will be a
+		 * chance that the file count can be decreased via fd closure or kernel cleanup
+		 * due to process crash/exits.
+		 *
+		 * This decreasing will trigger dma-buf release.
+		 *
+		 * To ensure the dma-buf is still available for further usage in HAB driver,
+		 * ex. busy check during unimport, HAB driver always increases the count by one in
+		 * this case.
+		 *
+		 * Meanwhile, increasing the file count by one is not applicable to the khab
+		 * scenario. Because it cannot prevent use-after-free from happening if HAB
+		 * client in kernel violates the HAB AoU, ex.
+		 * 1. misuse the dma_buf_put()
+		 * 2. alloc fd and share it to user space while not increasing the file count
+		 * the dma-buf may be reclaimed before the last dma_buf_put() in HAB driver which is
+		 * the expected last one to decrease the file cnt from 1 to 0.
+		 *
+		 * TODO: Once the weak semantic of hab unimport is supported, HAB driver will not
+		 * access the dma-buf after import except in dma-buf release callback.
+		 * Thus, the below get_file can be removed.
+		 */
+		get_file(dma_buf->file);
 	}
+	exp->kva = dma_buf;
+
 	return 0;
 }
 
-int habmm_imp_hyp_unmap(void *imp_ctx, struct export_desc *exp, int kernel)
+int habmm_imp_hyp_unmap(void *imp_ctx, struct export_desc *exp, long fcnt_idle)
 {
 	int ret = 0;
 	struct dma_buf *buf;
+	long cnt;
+	struct export_desc_super *exp_super = container_of(exp, struct export_desc_super, exp);
 
-	/* dma_buf is the only supported format in khab */
-	if (kernel) {
-		buf = (struct dma_buf *)exp->kva;
+	buf = (struct dma_buf *)exp->kva;
+	if (buf == NULL) {
+		ret = -EINVAL;
+	} else if (!exp_super->is_loopback) {
 		/*
-		 * mmap/sharing fd would increase the file refcnt.
-		 * A file with its refcnt value higher than 1 indicates that there
-		 * is still memory usage alive out there.
-		 * In current design, HAB unimport invoker should ensure the memory
-		 * is not used anymore. Thus, HAB driver is the last one to decrease
-		 * refcnt from 1 to 0 which will trigger dma-buf free, then notify
-		 * the remote OS that the buf is not needed by the local OS.
+		 * mmap/sharing fd would increase the file count.
+		 * A file with its count value higher than expected indicates that the
+		 * memory is still in use out there.
+		 * In the current design, strong unimport semantic, HAB unimport invoker
+		 * should ensure the memory is not in use anymore before calling unimport.
+		 *
+		 * Thus, HAB driver can check the memory in use status by reading the
+		 * dma-buf file count. Meanwhile, HAB driver/uhab is the last one to
+		 * decrease count from 1 to 0. HAB driver then can notify the remote OS
+		 * that the buf is not needed by the local OS. The unimport message is
+		 * sent immediately, rather than waiting for the dma-buf file release,
+		 * if the current function returned successfully. It ensures all of the
+		 * unimport actions are finished as early as possible because the file
+		 * release callback is usually deferred.
 		 */
-		if (file_count(buf->file) > 1) {
+		cnt = file_count(buf->file);
+		if (cnt > fcnt_idle) {
 			ret = -EBUSY;
-			pr_err("the buf (exp id %d) still in use on %x, refcnt %ld\n",
-				exp->export_id, exp->vchan->id, file_count(buf->file));
+			pr_err("the buf (exp id %u) still in use on %x, refcnt %ld, expect %ld\n",
+				exp->export_id, exp->vcid_local, cnt, fcnt_idle);
+		} else if (cnt < fcnt_idle) {
+			ret = -ENOENT;
+			pr_err("the dmabuf (exp id %u) cnt is invalid %ld, expect %ld, vcid %X\n",
+				exp->export_id, cnt, fcnt_idle, exp->vcid_local);
 		} else {
-			dma_buf_put((struct dma_buf *)exp->kva);
+			exp->kva = NULL;
+			dma_buf_put(buf);
 			pr_debug("dmabuf put for exp id %d on %x\n",
-			    exp->export_id, exp->vchan->id);
+				exp->export_id, exp->vcid_local);
 		}
+	} else {
+		/* loopback memory */
+		pr_debug("unimport lb memory expid %u on %x\n",
+			exp->export_id, exp->vcid_local);
+		dma_buf_put(buf);
 	}
 
 	return ret;

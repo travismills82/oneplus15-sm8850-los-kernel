@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2020-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  */
 
 #include <linux/module.h>
 #include <linux/of_platform.h>
 #include <linux/platform_device.h>
 #include <linux/err.h>
+#include <linux/of.h>
 
 #include <linux/qcom_dma_heap.h>
 #include <linux/qcom_tvm_heap.h>
@@ -27,11 +28,6 @@
 #define FOPS_INIT_VAL ERR_PTR(-EINVAL)
 static const struct file_operations *dma_buf_cached_fops;
 
-#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_OSVELTE)
-#include <mm_osvelte/sys-memstat.h>
-#include <mm_osvelte/common.h>
-#endif /* CONFIG_OPLUS_FEATURE_MM_OSVELTE */
-
 static int qcom_dma_heap_probe(struct platform_device *pdev)
 {
 	int ret = 0;
@@ -42,10 +38,14 @@ static int qcom_dma_heap_probe(struct platform_device *pdev)
 #ifdef CONFIG_QCOM_DMABUF_HEAPS_SYSTEM_UNCACHED
 	qcom_system_heap_create("qcom,system-uncached", NULL, true);
 #endif
-	qcom_secure_system_heap_create("qcom,secure-pixel", NULL,
+	const struct device_node *dt_node = pdev->dev.of_node;
+
+	if (!of_property_read_bool(dt_node, "qcom,hgy-secure-heap")) {
+		qcom_secure_system_heap_create("qcom,secure-pixel", NULL,
 				       QCOM_DMA_HEAP_FLAG_CP_PIXEL);
-	qcom_secure_system_heap_create("qcom,secure-non-pixel", NULL,
+		qcom_secure_system_heap_create("qcom,secure-non-pixel", NULL,
 				       QCOM_DMA_HEAP_FLAG_CP_NON_PIXEL);
+	}
 	qcom_sys_movable_heap_create();
 
 	heaps = parse_heap_dt(pdev);
@@ -61,6 +61,9 @@ static int qcom_dma_heap_probe(struct platform_device *pdev)
 			break;
 		case HEAP_TYPE_CARVEOUT:
 			ret = qcom_carveout_heap_create(heap_data);
+			break;
+		case HEAP_TYPE_SC_TCM_CARVEOUT:
+			ret = qcom_sc_tcm_carveout_heap_create(heap_data);
 			break;
 		case HEAP_TYPE_CMA:
 			ret = qcom_add_cma_heap(heap_data);
@@ -101,6 +104,52 @@ bool qcom_is_dma_buf_file(struct file *file)
 }
 EXPORT_SYMBOL(qcom_is_dma_buf_file);
 
+static int qcom_dma_heaps_freeze(struct device *dev)
+{
+	int ret;
+
+	ret = qcom_secure_carveout_heap_freeze();
+	if (ret) {
+		pr_err("Failed to freeze secure carveout heap: %d\n", ret);
+		return ret;
+	}
+
+	ret = qcom_secure_system_heap_freeze();
+	if (ret) {
+		pr_err("Failed to freeze secure system heap: %d\n", ret);
+		goto err;
+	}
+
+	return 0;
+err:
+	ret = qcom_secure_carveout_heap_restore();
+	if (ret) {
+		pr_err("Failed to restore secure carveout heap: %d\n", ret);
+		return ret;
+	}
+	return -EBUSY;
+}
+
+static int qcom_dma_heaps_restore(struct device *dev)
+{
+	int ret;
+
+	ret = qcom_secure_carveout_heap_restore();
+	if (ret)
+		pr_err("Failed to restore secure carveout heap: %d\n", ret);
+
+	ret = qcom_secure_system_heap_restore();
+	if (ret)
+		pr_err("Failed to restore secure system heap: %d\n", ret);
+
+	return ret;
+}
+
+static const struct dev_pm_ops qcom_dma_heaps_pm_ops = {
+	.freeze_late = qcom_dma_heaps_freeze,
+	.restore_early = qcom_dma_heaps_restore,
+};
+
 static const struct of_device_id qcom_dma_heap_match_table[] = {
 	{.compatible = "qcom,dma-heaps"},
 	{},
@@ -111,40 +160,12 @@ static struct platform_driver qcom_dma_heap_driver = {
 	.driver = {
 		.name = "qcom-dma-heap",
 		.of_match_table = qcom_dma_heap_match_table,
+		.pm = &qcom_dma_heaps_pm_ops,
 	},
 };
 
-#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_OSVELTE)
-extern atomic64_t qcom_dma_heap_pool;
-extern atomic64_t qcom_system_heap_total;
-#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_BOOSTPOOL)
-extern atomic64_t boost_pool_pages;
-#endif /*CONFIG_OPLUS_FEATURE_MM_BOOSTPOOL*/
-long read_dmabuf_mem_usage(enum mtrack_subtype type)
-{
-	if (type == MTRACK_DMABUF_SYSTEM_HEAP)
-		return atomic64_read(&qcom_system_heap_total) >> PAGE_SHIFT;
-	else if (type == MTRACK_DMABUF_POOL)
-		return atomic64_read(&qcom_dma_heap_pool);
-#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_BOOSTPOOL)
-	else if (type == MTRACK_DMABUF_BOOST_POOL)
-		return atomic64_read(&boost_pool_pages);
-#endif /* CONFIG_OPLUS_FEATURE_MM_BOOSTPOOL */
-
-	return 0;
-}
-
-static struct mtrack_debugger dmabuf_mtrack_debugger = {
-	.mem_usage = read_dmabuf_mem_usage,
-	.dump_usage_stat = NULL,
-};
-#endif /* CONFIG_OPLUS_FEATURE_MM_OSVELTE */
-
 static int __init init_heap_driver(void)
 {
-#if IS_ENABLED(CONFIG_OPLUS_FEATURE_MM_OSVELTE)
-	register_mtrack_debugger(MTRACK_DMABUF, &dmabuf_mtrack_debugger);
-#endif /* CONFIG_OPLUS_FEATURE_MM_OSVELTE */
 	return platform_driver_register(&qcom_dma_heap_driver);
 }
 module_init(init_heap_driver);

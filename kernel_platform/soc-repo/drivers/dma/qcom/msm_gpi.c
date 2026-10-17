@@ -127,7 +127,7 @@ enum EV_PRIORITY {
 #define GPII_VERB(gpii, ch, fmt, ...)
 #endif
 
-#define IPC_LOG_PAGES (2)
+#define IPC_LOG_PAGES (40)
 #define GPI_LABEL_SIZE (256)
 #define GPI_DBG_COMMON (99)
 #define MAX_CHANNELS_PER_GPII (2)
@@ -654,6 +654,7 @@ struct gpii {
 	bool is_resumed;
 	bool is_multi_desc;
 	int num_msgs;
+	cpumask_t cpu_affinity_mask; /* saved CPU affinity for IRQ, re-applied after deep sleep */
 };
 
 struct gpi_desc {
@@ -788,9 +789,23 @@ static void gpi_dump_cntxt_regs(struct gpii *gpii)
 	}
 
 	for (chan = 0; chan < MAX_CHANNELS_PER_GPII; chan++) {
+		offset = GPI_GPII_n_CH_k_CNTXT_1_OFFS(gpii->gpii_id, gpii->gpii_chan[chan].chid);
+		reg_val = readl_relaxed(gpii->regs + offset);
+		GPII_ERR(gpii, GPI_DBG_COMMON, "GPI_GPII_%d_CH_%d_CNTXT_1 reg_val:0x%x\n",
+			 gpii->gpii_id, chan, reg_val);
+	}
+
+	for (chan = 0; chan < MAX_CHANNELS_PER_GPII; chan++) {
 		offset = GPI_GPII_n_CH_k_CNTXT_2_OFFS(gpii->gpii_id, gpii->gpii_chan[chan].chid);
 		reg_val = readl_relaxed(gpii->regs + offset);
 		GPII_ERR(gpii, GPI_DBG_COMMON, "GPI_GPII_%d_CH_%d_CNTXT_2 reg_val:0x%x\n",
+			 gpii->gpii_id, chan, reg_val);
+	}
+
+	for (chan = 0; chan < MAX_CHANNELS_PER_GPII; chan++) {
+		offset = GPI_GPII_n_CH_k_CNTXT_3_OFFS(gpii->gpii_id, gpii->gpii_chan[chan].chid);
+		reg_val = readl_relaxed(gpii->regs + offset);
+		GPII_ERR(gpii, GPI_DBG_COMMON, "GPI_GPII_%d_CH_%d_CNTXT_3 reg_val:0x%x\n",
 			 gpii->gpii_id, chan, reg_val);
 	}
 
@@ -802,6 +817,13 @@ static void gpi_dump_cntxt_regs(struct gpii *gpii)
 	}
 
 	for (chan = 0; chan < MAX_CHANNELS_PER_GPII; chan++) {
+		offset = GPI_GPII_n_CH_k_CNTXT_5_OFFS(gpii->gpii_id, gpii->gpii_chan[chan].chid);
+		reg_val = readl_relaxed(gpii->regs + offset);
+		GPII_ERR(gpii, GPI_DBG_COMMON, "GPI_GPII_%d_CH_%d_CNTXT_5 reg_val:0x%x\n",
+			 gpii->gpii_id, chan, reg_val);
+	}
+
+	for (chan = 0; chan < MAX_CHANNELS_PER_GPII; chan++) {
 		offset = GPI_GPII_n_CH_k_CNTXT_6_OFFS(gpii->gpii_id, gpii->gpii_chan[chan].chid);
 		reg_val = readl_relaxed(gpii->regs + offset);
 		GPII_ERR(gpii, GPI_DBG_COMMON, "GPI_GPII_%d_CH_%d_CNTXT_6 reg_val:0x%x\n",
@@ -809,32 +831,51 @@ static void gpi_dump_cntxt_regs(struct gpii *gpii)
 	}
 
 	for (chan = 0; chan < MAX_CHANNELS_PER_GPII; chan++) {
-		offset = GPI_GPII_n_EV_CH_k_CNTXT_0_OFFS(gpii->gpii_id,	gpii->gpii_chan[chan].chid);
+		offset = GPI_GPII_n_CH_k_CNTXT_7_OFFS(gpii->gpii_id, gpii->gpii_chan[chan].chid);
 		reg_val = readl_relaxed(gpii->regs + offset);
-		GPII_ERR(gpii, GPI_DBG_COMMON, "GPI_GPII_%d_EV_%d_CNTXT_0 reg_val:0x%x\n",
+		GPII_ERR(gpii, GPI_DBG_COMMON, "GPI_GPII_%d_CH_%d_CNTXT_7 reg_val:0x%x\n",
 			 gpii->gpii_id, chan, reg_val);
 	}
 
-	for (chan = 0; chan < MAX_CHANNELS_PER_GPII; chan++) {
-		offset = GPI_GPII_n_EV_CH_k_CNTXT_2_OFFS(gpii->gpii_id, gpii->gpii_chan[chan].chid);
-		reg_val = readl_relaxed(gpii->regs + offset);
-		GPII_ERR(gpii, GPI_DBG_COMMON, "GPI_GPII_%d_EV_%d_CNTXT_2 reg_val:0x%x\n",
-			 gpii->gpii_id, chan, reg_val);
-	}
+	offset = GPI_GPII_n_EV_CH_0_CNTXT_0_OFFS(gpii->gpii_id);
+	reg_val = readl_relaxed(gpii->regs + offset);
+	GPII_ERR(gpii, GPI_DBG_COMMON, "GPI_GPII_%d_EV_0_CNTXT_0 reg_val: 0x%x\n",
+		 gpii->gpii_id, reg_val);
 
-	for (chan = 0; chan < MAX_CHANNELS_PER_GPII; chan++) {
-		offset = GPI_GPII_n_EV_CH_k_CNTXT_4_OFFS(gpii->gpii_id,	gpii->gpii_chan[chan].chid);
-		reg_val = readl_relaxed(gpii->regs + offset);
-		GPII_ERR(gpii, GPI_DBG_COMMON, "GPI_GPII_%d_EV_%d_CNTXT_4 reg_val:0x%x\n",
-			 gpii->gpii_id, chan, reg_val);
-	}
+	offset = GPI_GPII_n_EV_CH_0_CNTXT_1_OFFS(gpii->gpii_id);
+	reg_val = readl_relaxed(gpii->regs + offset);
+	GPII_ERR(gpii, GPI_DBG_COMMON, "GPI_GPII_%d_EV_0_CNTXT_1 reg_val: 0x%x\n",
+		 gpii->gpii_id, reg_val);
 
-	for (chan = 0; chan < MAX_CHANNELS_PER_GPII; chan++) {
-		offset = GPI_GPII_n_EV_CH_k_CNTXT_6_OFFS(gpii->gpii_id, gpii->gpii_chan[chan].chid);
-		reg_val = readl_relaxed(gpii->regs + offset);
-		GPII_ERR(gpii, GPI_DBG_COMMON, "GPI_GPII_%d_EV_%d_CNTXT_6 reg_val:0x%x\n",
-			 gpii->gpii_id, chan, reg_val);
-	}
+	offset = GPI_GPII_n_EV_CH_0_CNTXT_2_OFFS(gpii->gpii_id);
+	reg_val = readl_relaxed(gpii->regs + offset);
+	GPII_ERR(gpii, GPI_DBG_COMMON, "GPI_GPII_%d_EV_0_CNTXT_2 reg_val: 0x%x\n",
+		 gpii->gpii_id, reg_val);
+
+	offset = GPI_GPII_n_EV_CH_0_CNTXT_3_OFFS(gpii->gpii_id);
+	reg_val = readl_relaxed(gpii->regs + offset);
+	GPII_ERR(gpii, GPI_DBG_COMMON, "GPI_GPII_%d_EV_0_CNTXT_3 reg_val: 0x%x\n",
+		 gpii->gpii_id, reg_val);
+
+	offset = GPI_GPII_n_EV_CH_0_CNTXT_4_OFFS(gpii->gpii_id);
+	reg_val = readl_relaxed(gpii->regs + offset);
+	GPII_ERR(gpii, GPI_DBG_COMMON, "GPI_GPII_%d_EV_0_CNTXT_4 reg_val: 0x%x\n",
+		 gpii->gpii_id, reg_val);
+
+	offset = GPI_GPII_n_EV_CH_0_CNTXT_5_OFFS(gpii->gpii_id);
+	reg_val = readl_relaxed(gpii->regs + offset);
+	GPII_ERR(gpii, GPI_DBG_COMMON, "GPI_GPII_%d_EV_0_CNTXT_5 reg_val: 0x%x\n",
+		 gpii->gpii_id, reg_val);
+
+	offset = GPI_GPII_n_EV_CH_0_CNTXT_6_OFFS(gpii->gpii_id);
+	reg_val = readl_relaxed(gpii->regs + offset);
+	GPII_ERR(gpii, GPI_DBG_COMMON, "GPI_GPII_%d_EV_0_CNTXT_6 reg_val: 0x%x\n",
+		 gpii->gpii_id, reg_val);
+
+	offset = GPI_GPII_n_EV_CH_0_CNTXT_7_OFFS(gpii->gpii_id);
+	reg_val = readl_relaxed(gpii->regs + offset);
+	GPII_ERR(gpii, GPI_DBG_COMMON, "GPI_GPII_%d_EV_0_CNTXT_7 reg_val: 0x%x\n",
+		 gpii->gpii_id, reg_val);
 
 	for (chan = 0; chan < MAX_CHANNELS_PER_GPII; chan++) {
 		offset = GPI_GPII_n_CH_k_RE_FETCH_READ_PTR(gpii->gpii_id,
@@ -867,19 +908,21 @@ static void gpi_dump_debug_reg(struct gpii *gpii)
 					(gpii->gpii_id) },
 		{ "TYPE_IRQ_MSK", GPI_GPII_n_CNTXT_TYPE_IRQ_MSK_OFFS
 					(gpii->gpii_id) },
-		{ "CH_IRQ", GPI_GPII_n_CNTXT_SRC_GPII_CH_IRQ_OFFS
+		{ "MCS_CODE_VER", GPI_GPII_n_GSI_MCS_CODE_VER
 					(gpii->gpii_id) },
-		{ "EV_IRQ", GPI_GPII_n_CNTXT_SRC_EV_CH_IRQ_OFFS
+		{ "SRC_CH_IRQ", GPI_GPII_n_CNTXT_SRC_GPII_CH_IRQ_OFFS
 					(gpii->gpii_id) },
-		{ "CH_IRQ_MSK", GPI_GPII_n_CNTXT_SRC_CH_IRQ_MSK_OFFS
+		{ "SRC_EV_IRQ", GPI_GPII_n_CNTXT_SRC_EV_CH_IRQ_OFFS
 					(gpii->gpii_id) },
-		{ "EV_IRQ_MSK", GPI_GPII_n_CNTXT_SRC_EV_CH_IRQ_MSK_OFFS
+		{ "SRC_CH_IRQ_MSK", GPI_GPII_n_CNTXT_SRC_CH_IRQ_MSK_OFFS
 					(gpii->gpii_id) },
-		{ "IEOB_IRQ", GPI_GPII_n_CNTXT_SRC_IEOB_IRQ_OFFS
+		{ "SRC_EV_IRQ_MSK", GPI_GPII_n_CNTXT_SRC_EV_CH_IRQ_MSK_OFFS
 					(gpii->gpii_id) },
-		{ "IEOB_IRQ_MSK", GPI_GPII_n_CNTXT_SRC_IEOB_IRQ_MSK_OFFS
+		{ "SRC_IEOB_IRQ", GPI_GPII_n_CNTXT_SRC_IEOB_IRQ_OFFS
 					(gpii->gpii_id) },
-		{ "GLOB_IRQ", GPI_GPII_n_CNTXT_GLOB_IRQ_STTS_OFFS
+		{ "SRC_IEOB_IRQ_MSK", GPI_GPII_n_CNTXT_SRC_IEOB_IRQ_MSK_OFFS
+					(gpii->gpii_id) },
+		{ "GLOB_IRQ_STTS", GPI_GPII_n_CNTXT_GLOB_IRQ_STTS_OFFS
 					(gpii->gpii_id) },
 		{ "GLOB_IRQ_EN", GPI_GPII_n_CNTXT_GLOB_IRQ_EN_OFFS
 					(gpii->gpii_id) },
@@ -995,7 +1038,7 @@ static void gpi_dump_debug_reg(struct gpii *gpii)
 		dbg_reg_table->ch_scratch_0[chan] = readl_relaxed(gpii->regs +
 				GPI_GPII_n_CH_k_SCRATCH_0_OFFS(gpii->gpii_id,
 						gpii->gpii_chan[chan].chid));
-		GPII_ERR(gpii, GPI_DBG_COMMON, "GPI_ch_scratch Reg addr:0x%x->val:0x%x\n",
+		GPII_ERR(gpii, GPI_DBG_COMMON, "GPI_ch_%d_scratch Reg addr:0x%x->val:0x%x\n", chan,
 			 GPI_GPII_n_CH_k_SCRATCH_0_OFFS(gpii->gpii_id, gpii->gpii_chan[chan].chid),
 			 dbg_reg_table->ch_scratch_0[chan]);
 	}
@@ -1763,9 +1806,11 @@ static int gpi_send_cmd(struct gpii *gpii,
 	/* confirm new ch state is correct , if the cmd is a state change cmd */
 	if (gpi_cmd_info[gpi_cmd].state == STATE_IGNORE)
 		return 0;
-	if (IS_CHAN_CMD(gpi_cmd) &&
-	    gpii_chan->ch_state == gpi_cmd_info[gpi_cmd].state)
-		return 0;
+	if (gpii_chan) {
+		if (IS_CHAN_CMD(gpi_cmd) &&
+		    gpii_chan->ch_state == gpi_cmd_info[gpi_cmd].state)
+			return 0;
+	}
 	if (!IS_CHAN_CMD(gpi_cmd) &&
 	    gpii->ev_state == gpi_cmd_info[gpi_cmd].state)
 		return 0;
@@ -2255,6 +2300,26 @@ static void gpi_process_qup_notif_event(struct gpii_chan *gpii_chan,
 			      client_info->cb_param);
 }
 
+static void gpi_free_all_chan_desc(struct gpii_chan *gpii_chan)
+{
+	struct virt_dma_chan *vc = &gpii_chan->vc;
+	struct virt_dma_desc *vd, *temp;
+	unsigned long flags;
+	LIST_HEAD(head);
+
+	GPII_VERB(gpii_chan->gpii, gpii_chan->chid, "Freeing all pending descriptors\n");
+	spin_lock_irqsave(&vc->lock, flags);
+	vchan_get_all_descriptors(vc, &head);
+	spin_unlock_irqrestore(&vc->lock, flags);
+
+	list_for_each_entry_safe(vd, temp, &head, node) {
+		struct gpi_desc *gpi_desc = to_gpi_desc(vd);
+
+		list_del(&vd->node);
+		kfree(gpi_desc);
+	}
+}
+
 /* free gpi_desc for the specified channel */
 static void gpi_free_chan_desc(struct gpii_chan *gpii_chan)
 {
@@ -2424,7 +2489,7 @@ static void gpi_process_xfer_compl_event(struct gpii_chan *gpii_chan,
 {
 	struct gpii *gpii = gpii_chan->gpii;
 	struct gpi_ring *ch_ring = gpii_chan->ch_ring;
-	void *ev_rp = to_virtual(ch_ring, compl_event->ptr);
+	void *ev_rp;
 	struct virt_dma_desc *vd;
 	struct msm_gpi_dma_async_tx_cb_param *tx_cb_param;
 	struct gpi_desc *gpi_desc;
@@ -2441,6 +2506,29 @@ static void gpi_process_xfer_compl_event(struct gpii_chan *gpii_chan,
 				      __LINE__);
 		return;
 	}
+
+	/* Validate TRE address belongs to this channel before converting to virtual */
+	if (compl_event->ptr < ch_ring->phys_addr ||
+	    compl_event->ptr >= ch_ring->phys_addr + ch_ring->len) {
+		struct gpi_ere *gpi_ere;
+
+		GPII_ERR(gpii, gpii_chan->chid,
+			 "TRE address 0x%llx not in channel ring! ring:[0x%llx-0x%llx]\n",
+			 compl_event->ptr, ch_ring->phys_addr,
+			 ch_ring->phys_addr + ch_ring->len);
+		gpi_ere = (struct gpi_ere *)compl_event;
+		GPII_ERR(gpii, gpii_chan->chid, "Event: %08x %08x %08x %08x\n",
+			 gpi_ere->dword[0], gpi_ere->dword[1],
+			 gpi_ere->dword[2], gpi_ere->dword[3]);
+
+		/* Don't update ring pointers with invalid TRE address */
+		gpi_generate_cb_event(gpii_chan, MSM_GPI_QUP_EOT_DESC_MISMATCH,
+				      __LINE__);
+		return;
+	}
+
+	/* Safe to convert: TRE address validated */
+	ev_rp = to_virtual(ch_ring, compl_event->ptr);
 
 	spin_lock_irqsave(&gpii_chan->vc.lock, flags);
 	vd = vchan_next_desc(&gpii_chan->vc);
@@ -2531,6 +2619,11 @@ static void gpi_process_xfer_compl_event(struct gpii_chan *gpii_chan,
 			goto gpi_free_desc;
 	}
 	tx_cb_param = vd->tx.callback_param;
+
+	GPII_INFO(gpii, gpii_chan->chid,
+		  "DEBUG: vd:%p vd->tx:%p vd->tx.callback:%p tx_cb_param:%p\n",
+		 vd, &vd->tx, vd->tx.callback, tx_cb_param);
+
 	if (vd->tx.callback && tx_cb_param) {
 		GPII_VERB(gpii, gpii_chan->chid,
 			  "cb_length:%u compl_code:0x%x status:0x%x\n",
@@ -3241,7 +3334,6 @@ int gpi_terminate_all(struct dma_chan *chan)
 	struct gpii *gpii = gpii_chan->gpii;
 	int schid, echid, i;
 	int ret = 0;
-	bool stop_cmd_failed = false;
 	u32 ch_state;
 
 	GPII_INFO(gpii, gpii_chan->chid, "Enter\n");
@@ -3269,27 +3361,30 @@ int gpi_terminate_all(struct dma_chan *chan)
 		if (ret) {
 			GPII_ERR(gpii, gpii_chan->chid,
 				 "Error Stopping Chan:%d resetting\n", ret);
-			stop_cmd_failed = true;
 		} else {
 			gpi_noop_tre(gpii_chan);
+			if (gpii->protocol == SE_PROTOCOL_UART)
+				gpi_free_chan_desc(gpii_chan);
+			else
+				gpi_free_all_chan_desc(gpii_chan);
 		}
 	}
 
-	/* Reset channels if stop command fails */
-	if (stop_cmd_failed) {
-		if (!gpii->reg_table_dump) {
-			gpi_dump_debug_reg(gpii);
-			gpii->reg_table_dump = true;
-		}
+	/* Reset the channels (clears any pending TREs) */
+	if (!gpii->reg_table_dump) {
+		gpi_dump_debug_reg(gpii);
+		gpii->reg_table_dump = true;
+	}
+	for (i = schid; i < echid; i++) {
+		gpii_chan = &gpii->gpii_chan[i];
 		ch_state = gpi_read_ch_state(gpii_chan);
 		GPII_ERR(gpii, gpii_chan->chid, "CH state state:%s\n",
 			 TO_GPI_CH_STATE_STR(ch_state));
-		for (i = schid; i < echid; i++) {
-			gpii_chan = &gpii->gpii_chan[i];
+		if (ch_state != CH_STATE_STOPPED) {
 			ret = gpi_reset_chan(gpii_chan, GPI_CH_CMD_RESET);
 			if (ret) {
-				GPII_ERR(gpii, gpii_chan->chid,
-					 "Error resetting channel: %d\n", ret);
+				GPII_ERR(gpii, gpii_chan->chid, "Error resetting channel: %d\n",
+					 ret);
 				gpi_dump_debug_reg(gpii);
 				goto terminate_exit;
 			}
@@ -3297,8 +3392,8 @@ int gpi_terminate_all(struct dma_chan *chan)
 			/* reprogram channel CNTXT */
 			ret = gpi_alloc_chan(gpii_chan, false);
 			if (ret) {
-				GPII_ERR(gpii, gpii_chan->chid,
-					 "Error allocating channel: %d\n", ret);
+				GPII_ERR(gpii, gpii_chan->chid, "Error allocating channel: %d\n",
+					 ret);
 				goto terminate_exit;
 			}
 		}
@@ -3445,7 +3540,8 @@ static void gpi_noop_tre(struct gpii_chan *gpii_chan)
 		GPII_INFO(gpii, gpii_chan->chid,
 			"local_rp:0x%0llx\n", local_rp);
 	}
-
+	GPII_INFO(gpii, gpii_chan->chid,
+		  "DEBUG: After noop local_rp:0x%0llx local_wp:0x%0llx\n", local_rp, local_wp);
 	GPII_INFO(gpii, gpii_chan->chid, "exit\n");
 }
 
@@ -3454,9 +3550,10 @@ static int gpi_pause(struct dma_chan *chan)
 {
 	struct gpii_chan *gpii_chan = to_gpii_chan(chan);
 	struct gpii *gpii = gpii_chan->gpii;
-	int idx = 0;
+	int i, ret, idx = 0;
 	u32 offset1, offset2, type1, type2;
 	struct gpi_ring *ev_ring = gpii->ev_ring;
+	struct msm_gpi_ctrl *gpi_ctrl = chan->private;
 	phys_addr_t cntxt_rp, local_rp;
 	void *rp, *rp1;
 	union gpi_event *gpi_event;
@@ -3515,6 +3612,42 @@ static int gpi_pause(struct dma_chan *chan)
 		rp1 += ev_ring->el_size;
 		if (rp1  >= (ev_ring->base + ev_ring->len))
 			rp1 = ev_ring->base;
+	}
+
+	if (gpi_ctrl->cmd == MSM_GPI_DEEP_SLEEP_INIT) {
+		GPII_INFO(gpii, gpii_chan->chid, "deep sleep config\n");
+		/* Resetting the channels */
+		for (i = 0; i < MAX_CHANNELS_PER_GPII; i++) {
+			gpii_chan = &gpii->gpii_chan[i];
+			ret = gpi_send_cmd(gpii, gpii_chan, GPI_CH_CMD_RESET);
+			if (ret) {
+				GPII_ERR(gpii, gpii->gpii_chan[i].chid,
+					 "Error resetting chan, ret:%d\n", ret);
+				mutex_unlock(&gpii->ctrl_lock);
+				return -ECONNRESET;
+			}
+		}
+
+		/* Dealloc the channels */
+		for (i = 0; i < MAX_CHANNELS_PER_GPII; i++) {
+			gpii_chan = &gpii->gpii_chan[i];
+			ret = gpi_reset_chan(gpii_chan, GPI_CH_CMD_DE_ALLOC);
+			if (ret) {
+				GPII_ERR(gpii, gpii->gpii_chan[i].chid,
+					 "Error chan deallocating, ret:%d\n", ret);
+				mutex_unlock(&gpii->ctrl_lock);
+				return -ECONNRESET;
+			}
+		}
+
+		/* Dealloc Event Ring */
+		ret = gpi_send_cmd(gpii, NULL, GPI_EV_CMD_DEALLOC);
+		if (ret) {
+			GPII_ERR(gpii, GPI_DBG_COMMON, "error with cmd:%s ret:%d\n",
+				 TO_GPI_CMD_STR(GPI_EV_CMD_DEALLOC), ret);
+			mutex_unlock(&gpii->ctrl_lock);
+			return ret;
+		}
 	}
 
 	if (gpii->dual_ee_sync_flag) {
@@ -3625,8 +3758,12 @@ struct dma_async_tx_descriptor *gpi_prep_slave_sg(struct dma_chan *chan,
 		  to_physical(ch_ring, ch_ring->wp), to_physical(ch_ring, ch_ring->rp),
 		  TO_GPI_CH_STATE_STR(ch_state));
 
-	if (ch_state == CH_STATE_ERROR)
+	if (ch_state == CH_STATE_ERROR) {
+		GPII_ERR(gpii, gpii_chan->chid,
+			 "Bail out the TRE subimit as Channel is in error state\n");
 		gpi_dump_debug_reg(gpii);
+		return NULL;
+	}
 
 	/* calculate # of elements required & available */
 	nr = gpi_ring_num_elements_avail(ch_ring);
@@ -3740,10 +3877,24 @@ static int gpi_deep_sleep_exit_config(struct dma_chan *chan)
 {
 	struct gpii_chan *gpii_chan = to_gpii_chan(chan);
 	struct gpii *gpii = gpii_chan->gpii;
-	int chid;
-	int ret;
+	struct gpi_ring *ring_ch = NULL;
+	struct gpi_ring *ring_ev = NULL;
+	int chid, ret;
 
 	GPII_INFO(gpii, gpii_chan->chid, "enter\n");
+
+	/* Reset the ring channel for TX,RX to the base address */
+	for (chid = 0; chid < MAX_CHANNELS_PER_GPII; chid++) {
+		gpii_chan = &gpii->gpii_chan[chid];
+		ring_ch = gpii_chan->ch_ring;
+		ring_ch->wp = ring_ch->base;
+		ring_ch->rp = ring_ch->base;
+	}
+
+	/* Reset Event ring to the base address */
+	ring_ev = gpii->ev_ring;
+	ring_ev->wp = ring_ev->base;
+	ring_ev->rp = ring_ev->base;
 
 	ret = gpi_config_interrupts(gpii, DEFAULT_IRQ_SETTINGS, 0);
 	if (ret) {
@@ -3777,10 +3928,23 @@ static int gpi_deep_sleep_exit_config(struct dma_chan *chan)
 		}
 	}
 
+	/* Re-apply CPU affinity for the GPII IRQ if it was previously configured */
+	if (!cpumask_empty(&gpii->cpu_affinity_mask)) {
+		ret = irq_set_affinity_hint(gpii->irq, &gpii->cpu_affinity_mask);
+		if (ret)
+			GPII_CRITIC(gpii, GPI_DBG_COMMON,
+				    "CPU affinity re-apply failed after deep sleep irq:%d ret:%d\n",
+				    gpii->irq, ret);
+		else
+			GPII_INFO(gpii, GPI_DBG_COMMON,
+				  "CPU affinity re-applied after deep sleep irq:%d CPUs:%*pbl\n",
+				  gpii->irq, cpumask_pr_args(&gpii->cpu_affinity_mask));
+	}
+
 	return ret;
 
 error_start_chan:
-	for (chid = chid - 1; chid >= 0; chid++) {
+	for (chid = chid - 1; chid >= 0; chid--) {
 		gpi_send_cmd(gpii, gpii_chan, GPI_CH_CMD_STOP);
 		gpi_send_cmd(gpii, gpii_chan, GPI_CH_CMD_RESET);
 	}
@@ -3908,6 +4072,23 @@ static int gpi_config(struct dma_chan *chan,
 			  "sending UART RFR READY NOT READY cmd\n");
 		ret = gpi_send_cmd(gpii, gpii_chan,
 				   GPI_CH_CMD_UART_RFR_NOT_READY);
+		break;
+	case MSM_GPI_SET_CPU_AFFINITY:
+		if (!cpumask_empty(&gpi_ctrl->cpu_affinity.cpu_mask)) {
+			ret = irq_set_affinity_hint(gpii->irq, &gpi_ctrl->cpu_affinity.cpu_mask);
+			if (ret) {
+				GPII_CRITIC(gpii, GPI_DBG_COMMON,
+					    "CPU affinity set failed irq:%d ret:%d\n",
+					    gpii->irq, ret);
+				ret = -EINVAL;
+				break;
+			}
+			/* Save mask so it can be re-applied after deep sleep resume */
+			cpumask_copy(&gpii->cpu_affinity_mask, &gpi_ctrl->cpu_affinity.cpu_mask);
+			GPI_LOG(gpii->gpi_dev, "gpii:%d CPU affinity set: irq:%d CPUs:%*pbl\n",
+				gpii->gpii_id, gpii->irq,
+				cpumask_pr_args(&gpi_ctrl->cpu_affinity.cpu_mask));
+		}
 		break;
 	default:
 		GPII_ERR(gpii, gpii_chan->chid,
@@ -4480,7 +4661,7 @@ static int gpi_probe(struct platform_device *pdev)
 
 		/* set up ev cntxt register map */
 		gpii->ev_cntxt_base_reg = gpi_dev->ee_base +
-			GPI_GPII_n_EV_CH_k_CNTXT_0_OFFS(i, 0);
+			GPI_GPII_n_EV_CH_0_CNTXT_0_OFFS(i);
 		gpii->ev_cntxt_db_reg = gpi_dev->ee_base +
 			GPI_GPII_n_EV_CH_k_DOORBELL_0_OFFS(i, 0);
 		gpii->ev_ring_base_lsb_reg = gpii->ev_cntxt_base_reg +

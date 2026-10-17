@@ -1,7 +1,7 @@
 ################################################################################
 ## Inheriting configs from ACK
-. ${ROOT_DIR}/soc-repo/build.config.common
-. ${ROOT_DIR}/soc-repo/build.config.aarch64
+. ${ROOT_DIR}/${SOC_DIR}/build.config.common
+. ${ROOT_DIR}/${SOC_DIR}/build.config.aarch64
 
 ################################################################################
 ## Variant setup

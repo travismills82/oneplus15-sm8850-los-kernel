@@ -36,6 +36,8 @@ def register_modules(registry):
             "drivers/soc/qcom/hab/hab_virq_hgy.h",
             "drivers/soc/qcom/hab/hab_virq.c",
             "drivers/soc/qcom/hab/hab_virq_hgy.c",
+            "drivers/soc/qcom/hab/hab_virq_qvm.c",
+            "drivers/soc/qcom/hab/hab_virq_qvm.h",
         ],
         deps = [
             # do not sort

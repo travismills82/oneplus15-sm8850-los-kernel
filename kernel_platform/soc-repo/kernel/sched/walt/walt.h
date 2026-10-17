@@ -23,14 +23,6 @@
 
 #define MSEC_TO_NSEC (1000 * 1000)
 
-#if IS_ENABLED(CONFIG_OPLUS_FEATURE_SCHED_ASSIST)
-#include <sched_assist/sa_fair.h>
-#endif
-
-#if IS_ENABLED(CONFIG_OPLUS_FEATURE_FRAME_BOOST)
-#include <frame_boost/frame_group.h>
-#endif
-
 #ifdef CONFIG_HZ_300
 /*
  * Tick interval becomes to 3333333 due to
@@ -58,6 +50,7 @@
 
 extern bool walt_disabled;
 extern bool waltgov_disabled;
+extern bool walt_quiet_state;
 
 enum task_event {
 	PUT_PREV_TASK	= 0,
@@ -100,6 +93,7 @@ enum freq_caps {
 #define SOC_ENABLE_PIPELINE_SWAPPING_BIT		BIT(9)
 #define SOC_ENABLE_THERMAL_HALT_LOW_FREQ_BIT		BIT(10)
 #define SOC_ENABLE_SINGLE_THREAD_PIPELINE_PINNING	BIT(11)
+#define SOC_ENABLE_LIMIT_PRIME_USAGE			BIT(12)
 
 extern int soc_sched_lib_name_capacity;
 
@@ -189,6 +183,7 @@ enum smart_freq_ipc_reason {
 };
 #define IPC_PARTICIPATION	(BIT(IPC_A) | BIT(IPC_B) | BIT(IPC_C) | BIT(IPC_D) | BIT(IPC_E))
 
+extern bool cpu_has_amu_support;
 DECLARE_PER_CPU(unsigned int, ipc_level);
 DECLARE_PER_CPU(unsigned long, ipc_cnt);
 DECLARE_PER_CPU(unsigned long, intr_cnt);
@@ -360,9 +355,6 @@ struct waltgov_policy {
 	bool			limits_changed;
 	bool			need_freq_update;
 	bool			thermal_isolated;
-#if IS_ENABLED(CONFIG_OPLUS_FEATURE_FRAME_BOOST)
-	unsigned int		flags;
-#endif
 	bool			rtg_boost_flag;
 	bool			hispeed_flag;
 	bool			conservative_pl_flag;
@@ -410,9 +402,6 @@ extern void walt_fill_ta_data(struct core_ctl_notif_data *data);
 extern int sched_set_group_id(struct task_struct *p, unsigned int group_id);
 extern unsigned int sched_get_group_id(struct task_struct *p);
 extern void core_ctl_check(u64 wallclock, u32 wakeup_ctr_sum);
-#if IS_ENABLED(CONFIG_OPLUS_FEATURE_SCHED_EXT)
-extern bool should_core_ctl(void);
-#endif
 extern int core_ctl_set_cluster_boost(int idx, bool boost);
 extern int sched_set_boost(int enable);
 extern void walt_boost_init(void);
@@ -437,6 +426,7 @@ extern int register_walt_callback(void);
 extern int input_boost_init(void);
 extern int core_ctl_init(void);
 extern void rebuild_sched_domains(void);
+extern bool can_fit_low_prio_task(struct task_struct *p, int cpu);
 
 extern atomic64_t walt_irq_work_lastq_ws;
 extern unsigned int __read_mostly sched_ravg_window;
@@ -461,6 +451,10 @@ extern unsigned int sysctl_sched_idle_enough;
 extern unsigned int sysctl_sched_cluster_util_thres_pct;
 extern unsigned int sysctl_sched_idle_enough_clust[MAX_CLUSTERS];
 extern unsigned int sysctl_sched_cluster_util_thres_pct_clust[MAX_CLUSTERS];
+extern unsigned int sf_misfit_delay_low_cap[MAX_CLUSTERS];
+extern unsigned int sf_misfit_delay_high_cap[MAX_CLUSTERS];
+/* deep-throttle boundary: cap_orig at/below this % of pre_cap is "deep" */
+#define SF_MISFIT_DEEP_CAP_PCT 40
 
 /* 1ms default for 20ms window size scaled to 1024 */
 extern unsigned int sysctl_sched_min_task_util_for_boost;
@@ -488,11 +482,6 @@ extern enum sched_boost_policy boost_policy;
 extern unsigned int sysctl_input_boost_ms;
 extern unsigned int sysctl_input_boost_freq[WALT_NR_CPUS];
 extern unsigned int sysctl_sched_boost_on_input;
-#if IS_ENABLED(CONFIG_OPLUS_FEATURE_CEILING_FREE)
-extern unsigned int sysctl_ceiling_free_enable;
-extern unsigned int sysctl_cb_ceiling_free_enable;
-extern unsigned int sysctl_omrg_ceiling_free_enable;
-#endif
 extern unsigned int sysctl_sched_user_hint;
 extern unsigned int sysctl_sched_conservative_pl;
 extern unsigned int sysctl_sched_hyst_min_coloc_ns;
@@ -596,10 +585,12 @@ extern struct irq_work walt_migration_irq_work;
 extern struct irq_work walt_cpufreq_irq_work;
 
 #define LIB_PATH_LENGTH 512
+#define LIB_UPDATE_CNT_MAX 127
 extern unsigned int cpuinfo_max_freq_cached;
 extern char sched_lib_name[LIB_PATH_LENGTH];
 extern char sched_lib_task[LIB_PATH_LENGTH];
 extern unsigned int sched_lib_mask_force;
+extern u8 lib_update_cnt;
 
 extern cpumask_t cpus_for_sbt_pause;
 extern unsigned int sysctl_sched_sbt_enable;
@@ -607,6 +598,7 @@ extern unsigned int sysctl_sched_sbt_delay_windows;
 
 extern cpumask_t cpus_for_pipeline;
 extern unsigned int pipeline_swap_util_th;
+extern bool single_cluster_pipeline;
 
 /* WALT cpufreq interface */
 #define WALT_CPUFREQ_ROLLOVER_BIT		BIT(0)
@@ -718,14 +710,7 @@ static inline void waltgov_remove_callback(int cpu)
 	rcu_assign_pointer(per_cpu(waltgov_cb_data, cpu), NULL);
 }
 
-static inline void waltgov_run_callback(struct rq *rq, unsigned int flags)
-{
-	struct waltgov_callback *cb;
-
-	cb = rcu_dereference_sched(*per_cpu_ptr(&waltgov_cb_data, cpu_of(rq)));
-	if (cb)
-		cb->func(cb, walt_sched_clock(), flags);
-}
+extern void waltgov_run_callback(struct rq *rq, unsigned int flags);
 
 extern unsigned long cpu_util_freq_walt(int cpu, struct walt_cpu_load *walt_load,
 		unsigned int *reason);
@@ -1032,6 +1017,10 @@ static inline bool is_min_capacity_cluster(struct walt_sched_cluster *cluster)
 	return cluster->id == min_possible_cluster_id;
 }
 
+static inline bool is_uclamped_cpu(int cpu)
+{
+	return uclamp_rq_get(cpu_rq(cpu), UCLAMP_MAX) < SCHED_CAPACITY_SCALE;
+}
 /*
  * This is only for tracepoints to print the avg irq load. For
  * task placment considerations, use sched_cpu_high_irqload().
@@ -1139,16 +1128,21 @@ static bool check_for_higher_capacity(int cpu1, int cpu2)
 	return capacity_orig_of(cpu1) > capacity_orig_of(cpu2);
 }
 
-static inline bool task_fits_capacity(struct task_struct *p,
-					int dst_cpu)
+extern void pipeline_demand(struct walt_task_struct *wts, u64 *scaled_gold_demand,
+		     u64 *scaled_prime_demand);
+
+static inline bool __task_fits_capacity(struct task_struct *p,
+					int dst_cpu,
+					unsigned long capacity)
 {
 	struct cgroup_subsys_state *css;
 	struct task_group *tg;
 	struct walt_task_group *wtg;
 	unsigned int margin;
-	unsigned long capacity = capacity_orig_of(dst_cpu);
 	bool down = check_for_higher_capacity(task_cpu(p), dst_cpu);
 	int id, cgroup_type = 0;
+	unsigned long util = 0;
+	u64 demand, other_demand;
 
 	rcu_read_lock();
 	css = task_css(p, cpu_cgrp_id);
@@ -1179,7 +1173,145 @@ finish:
 			margin = max(margin, sched_capacity_margin_up[ANDROID_CGROUP_TOPAPP][id]);
 	}
 
-	return capacity * 1024 > uclamp_task_util(p) * margin;
+	demand = task_util_est(p);
+
+	if (walt_pipeline_low_latency_task(p))
+		pipeline_demand(((struct walt_task_struct *)android_task_vendor_data(p)),
+				&demand, &other_demand);
+
+	util = clamp(demand, uclamp_eff_value(p, UCLAMP_MIN), uclamp_eff_value(p, UCLAMP_MAX));
+
+	return capacity * 1024 > util * margin;
+}
+
+/*
+ * is_smart_freq_limiting - check if smart_freq is the marginal capacity limiter
+ * for the cluster that contains @cpu.
+ *
+ * Returns true when the CPU's current effective capacity (cpu_capacity_orig,
+ * in arch_scale units) differs from pre_smart_freq_capacity (also in
+ * arch_scale units), meaning smart_freq has further reduced the cluster's
+ * effective capacity beyond what thermal/other limiters already imposed.
+ * Covers both Legacy and IPC paths.
+ */
+static inline bool is_smart_freq_limiting(int cpu)
+{
+	struct walt_sched_cluster *cluster = cpu_cluster(cpu);
+
+	return capacity_orig_of(cpu) != cluster->pre_smart_freq_capacity;
+}
+
+/*
+ * task_fits_capacity - check if task fits on dst_cpu, incorporating
+ * the smart_freq misfit delay mechanism.
+ *
+ * The sf_misfit delay suppresses spurious migration away from the cluster
+ * the task is currently running on while smart_freq is throttling the
+ * cluster frequency. The delay is therefore only meaningful when dst_cpu
+ * belongs to the same cluster as task_cpu(p): the task has accumulated
+ * run-time there and the delay context is valid.
+ *
+ * Cross-cluster candidates have no accumulated run-time in dst_cpu's
+ * cluster, making the delay semantically meaningless; those checks
+ * bypass the delay logic entirely.
+ *
+ * NOTE: task_fits_max() and task_demand_fits() both tail-call this
+ * function and automatically inherit the delay behavior.
+ */
+static inline bool task_fits_capacity(struct task_struct *p,
+				       int dst_cpu)
+{
+	struct walt_task_struct *wts =
+		(struct walt_task_struct *)android_task_vendor_data(p);
+	struct walt_sched_cluster *cluster = cpu_cluster(dst_cpu);
+	unsigned long cap_orig = capacity_orig_of(dst_cpu);
+	unsigned long pre_cap  = cluster->pre_smart_freq_capacity;
+	bool fits;
+	u64 now;
+	u32 dw;
+
+	fits = __task_fits_capacity(p, dst_cpu, cap_orig);
+
+	/*
+	 * Two-tier delay window based on throttle depth:
+	 *   cap_orig <= 40% of pre_cap  (low remaining cap)  -> sf_misfit_delay_low_cap
+	 *   cap_orig >  40% of pre_cap  (high remaining cap) -> sf_misfit_delay_high_cap
+	 *
+	 * Values are stored in nanoseconds and are independent of the window
+	 * size. A value of 0 disables the delay entirely (non-ART default).
+	 * The tier is re-evaluated on every call so transitions are handled
+	 * automatically without extra per-task state.
+	 */
+	dw = (cap_orig * 100 <= pre_cap * SF_MISFIT_DEEP_CAP_PCT)
+	     ? sf_misfit_delay_low_cap[cluster->id]
+	     : sf_misfit_delay_high_cap[cluster->id];
+
+	if (!dw)
+		return fits;
+
+	/*
+	 * The smart_freq delay is a per-cluster mechanism: sf_misfit_time
+	 * records a smart_freq-induced misfit in the context of the task's
+	 * current cluster. For a cross-cluster dst_cpu, skip the delay and
+	 * return the raw capacity fit result -- the destination cluster may
+	 * have a completely different smart_freq state.
+	 *
+	 * sf_misfit_time may also be stale (set on a prior cluster, cleared
+	 * lazily by android_rvh_set_task_cpu). Honoring it for a cross-cluster
+	 * check could make the task appear to fit a smaller cluster and
+	 * trigger a wrong down-migration.
+	 */
+	if (!same_cluster(task_cpu(p), dst_cpu))
+		return fits;
+
+	/* mart_freq not limiting, or task already fits: no delay needed. */
+	if (!is_smart_freq_limiting(dst_cpu) || fits) {
+		wts->sf_misfit_time = 0;
+		return fits;
+	}
+
+	/*
+	 * Task is a smart_freq misfit on its cluster which is under smart_freq
+	 * cap. Do check with pre_smart_freq_capacity which is either the max
+	 * physically possible capacity or it is the capacity lowered due to
+	 * thermals. If the task doesn't fit, it won't fit even when smart_freq
+	 * limits are removed; return false immediately.
+	 */
+	fits = __task_fits_capacity(p, dst_cpu, pre_cap);
+	if (!fits)
+		return false;
+
+	/*
+	 * cpu_rq(dst_cpu)->clock is a cheap per-CPU clock but only advances
+	 * while that rq is active, so a later read against a stale dst_cpu can
+	 * be smaller than the sf_misfit_time stamped from a different dst_cpu.
+	 * Clamp to the stored stamp so the unsigned subtraction below never
+	 * underflows. The value is intentionally imprecise but always monotone
+	 * w.r.t. sf_misfit_time. On first detection sf_misfit_time is 0, so the
+	 * max() reduces to the raw clock and the stamp keeps full precision.
+	 */
+	now = max_t(u64, cpu_rq(dst_cpu)->clock, wts->sf_misfit_time);
+
+	/* First detection: arm the timer and suppress migration. */
+	if (!wts->sf_misfit_time) {
+		wts->sf_misfit_time = now;
+		return true;
+	}
+
+	if (now - wts->sf_misfit_time < dw)
+		return true;
+
+	/*
+	 * Delay expired: keep reporting as misfit until the task actually
+	 * migrates to a new cluster.  Do NOT reset sf_misfit_time here;
+	 * it will be cleared by android_rvh_set_task_cpu() on a
+	 * cross-cluster migration, or by the sf_fits branch above when
+	 * the task fits again.  Resetting here would re-arm the delay
+	 * window on every failed migration attempt, preventing the task
+	 * from ever being upmigrated while large CPUs are busy or isolated.
+	 */
+
+	return false;
 }
 
 extern int pipeline_fits_smaller_cpus(struct task_struct *p);
@@ -1215,10 +1347,13 @@ static inline bool task_fits_max(struct task_struct *p, int dst_cpu)
 	} else { /* mid cap cpu */
 		if (task_boost > TASK_BOOST_ON_MID)
 			return false;
-		if (!task_in_related_thread_group(p) && p->prio >= 124)
-			/* a non topapp low prio task fits on gold */
-			return true;
 	}
+
+	/*
+	 * A non top-app low priority task fits on medium cpus
+	 */
+	if (can_fit_low_prio_task(p, dst_cpu))
+		return true;
 
 	return task_fits_capacity(p, dst_cpu);
 }
@@ -1330,11 +1465,8 @@ static inline void walt_irq_work_queue(struct irq_work *work)
  */
 static inline bool walt_fair_task(struct task_struct *p)
 {
-#if (!IS_ENABLED(CONFIG_OPLUS_FEATURE_SCHED_EXT))
-	return p->prio >= MAX_RT_PRIO && !walt_is_idle_task(p);
-#else
-	return (p->prio >= MAX_RT_PRIO && !walt_is_idle_task(p)) && !(task_on_scx(p));
-#endif
+	return (p->prio >= MAX_RT_PRIO && !walt_is_idle_task(p)) &&
+		!(task_on_scx(p));
 }
 
 extern int sched_long_running_rt_task_ms_handler(const struct ctl_table *table, int write,
@@ -1410,16 +1542,6 @@ static inline bool is_state1(void)
 /* determine if this task should be allowed to use a partially halted cpu */
 static inline bool task_reject_partialhalt_cpu(struct task_struct *p, int cpu)
 {
-#if IS_ENABLED(CONFIG_OPLUS_FEATURE_SCHED_ASSIST)
-	if (should_ux_task_skip_cpu(p, cpu))
-		return true;
-#endif
-
-#if IS_ENABLED(CONFIG_OPLUS_FEATURE_FRAME_BOOST)
-	if (fbg_skip_migration(p, task_cpu(p), cpu))
-		return true;
-#endif
-
 	if (p->prio < MAX_RT_PRIO)
 		return false;
 
@@ -1499,7 +1621,16 @@ static inline int walt_find_and_choose_cluster_packing_cpu(int start_cpu, struct
 	return packing_cpu;
 }
 
+static inline bool any_large_above_util_threshold(unsigned long util)
+{
+	int cpu;
 
+	for_each_cpu(cpu, &cpu_array[0][num_sched_clusters - 1])
+		if (cpu_util(cpu) > util)
+			return true;
+
+	return false;
+}
 
 #define LARGE_CPU_THROTTLED_CAP_THRESH 700
 static inline bool is_large_cpu_cap_low(void)
@@ -1509,17 +1640,6 @@ static inline bool is_large_cpu_cap_low(void)
 
 	if (wrq->cpu_capacity_orig < LARGE_CPU_THROTTLED_CAP_THRESH)
 		return true;
-
-	return false;
-}
-
-static inline bool any_large_above_util_threshold(unsigned long util)
-{
-	int cpu;
-
-	for_each_cpu(cpu, &cpu_array[0][num_sched_clusters - 1])
-		if (cpu_util(cpu) > util)
-			return true;
 
 	return false;
 }
@@ -1755,19 +1875,16 @@ extern unsigned int sysctl_pipeline_non_special_task_util_thres;
 extern unsigned int sysctl_pipeline_pin_thres_low_pct;
 extern unsigned int sysctl_pipeline_pin_thres_high_pct;
 extern unsigned int sysctl_pipeline_rearrange_delay_ms[2];
+extern unsigned int demand_scaling_factor;
+extern unsigned int min_demand_for_activity_cnt;
 DECLARE_PER_CPU(unsigned int, walt_yield_to_sleep);
 extern unsigned int walt_sched_yield_counter;
 extern unsigned int sysctl_force_frequent_yielder;
-#if IS_ENABLED(CONFIG_OPLUS_FEATURE_PIPELINE)
-extern unsigned int sysctl_yielder_disable;
-#endif
 void account_yields(u64 window_start);
-extern void pipeline_demand(struct walt_task_struct *wts, u64 *scaled_gold_demand,
-		     u64 *scaled_prime_demand);
 extern unsigned int sysctl_pipeline_force_config;
 extern unsigned long walt_cpu_energy(int cpu,
 				     unsigned long max_util, unsigned long sum_util);
-extern unsigned int gold_cluster_id, prime_cluster_id;
+extern unsigned int pipeline_lower_cluster_id, pipeline_higher_cluster_id;
 extern unsigned int soc_cluster_freq_table_size[MAX_CLUSTERS];
 extern unsigned int soc_cluster_freq_table[MAX_CLUSTERS][MAX_FREQ_TABLE_ENTRIES];
 struct waltgov_policy;
@@ -1776,6 +1893,7 @@ extern unsigned long walt_map_util_freq(unsigned long util,
 extern void early_walt_config(void);
 extern unsigned int sysctl_topapp_weight_pct;
 extern u64 trailblazer_boost_state_ns;
+extern unsigned int trailblazer_boost_thresh_ipc;
 extern u64 oscillate_ts_ns;
 
 /*
@@ -1784,4 +1902,167 @@ extern u64 oscillate_ts_ns;
  */
 #define GIANT_UTIL_THRESH_PCT 700
 extern u64 walt_rotation_stop_hyst_start_ts;
+
+enum trace_type {
+	INVALID,
+	WAKEUP_NEW,
+	UPDATE_CPU_CAPACITY,
+	CPU_STARTING,
+	CPU_DYING,
+	SET_TASK_CPU,
+	NEW_TASK_STATS,
+	ACCOUNT_IRQ,
+	FLUSH_TASK,
+	UPDATE_MISFIT_STATUS,
+	ENQUEUE_TASK,
+	DEQUEUE_TASK,
+	TRY_TO_WAKE_UP,
+	TICK_ENTRY,
+	SCHEDULER_TICK,
+	SCHEDULE,
+	CPU_CGROUP_ATTACH,
+	CPU_CGROUP_FREE,
+	CPU_CGROUP_ONLINE,
+	SCHED_FORK_INIT,
+	TTWU_COND,
+	SCHED_EXEC,
+	BUILD_PERF_DOMAINS,
+	CPU_FREQUENCY_LIMITS,
+	DO_SCHED_YIELD,
+	UPDATE_THERMAL_STATS,
+	DUP_TASK_STRUCT,
+	FREQ_QOS_ADD_REQUEST,
+	FREQ_QOS_UPDATE_REQUEST,
+	FREQ_QOS_REMOVE_REQUEST,
+	/* walt_cfs.c */
+	SELECT_TASK_RQ_FAIR,
+	BINDER_SET_PRIORITY_HOOK,
+	BINDER_RESTORE_PRIORITY_HOOK,
+	CHECK_PREEMPT_WAKEUP_FAIR,
+	REPLACE_NEXT_TASK_FAIR,
+	/* walt_lb.c */
+
+	SCHED_NOHZ_BALANCER_KICK,
+	CAN_MIGRATE_TASK,
+	FIND_BUSIEST_QUEUE,
+	SCHED_NEWIDLE_BALANCE,
+	FIND_NEW_ILB,
+
+	/* walt_rt.c */
+	WALT_SELECT_TASK_RQ_RT,
+	WALT_RT_FIND_LOWEST_RQ,
+
+	NUM_TRACE_HOOKS
+};
+
+#define MAX_STACK_DEPTH 16
+struct trace_inst_struct {
+	u64 inst_cnt[NUM_TRACE_HOOKS];
+	u64 last_inst_cnt;
+	enum trace_type type_stack[MAX_STACK_DEPTH];
+	uint top; /* top points to an empty one */
+	uint count_trace_hook[NUM_TRACE_HOOKS];
+};
+
+#ifdef TRACEHOOK_INST_CNT
+DECLARE_PER_CPU(struct trace_inst_struct, trace_inst_data);
+DECLARE_PER_CPU(u64, governor_entry);
+DECLARE_PER_CPU(u64, governor_inst);
+DECLARE_PER_CPU(uint, governor_count);
+DECLARE_PER_CPU(u64, walt_irq_work_inst);
+DECLARE_PER_CPU(u64, walt_irq_work_entry);
+DECLARE_PER_CPU(uint, walt_irq_work_count);
+DECLARE_PER_CPU(u64, utra_inst);
+DECLARE_PER_CPU(u64, utra_entry);
+DECLARE_PER_CPU(uint, utra_count);
+
+static inline u64 read_instruction_cnt(void)
+{
+	return read_sysreg_s(SYS_AMEVCNTR0_INST_RET_EL0);
+}
+
+static inline void get_entry_instr(enum trace_type type)
+{
+	int cpu;
+	struct trace_inst_struct *t;
+	u64 entry_cnt;
+
+	/* some tracehooks can switch(sleep), tracking them creates issues */
+	if (type == WAKEUP_NEW || type == CPU_CGROUP_ATTACH ||
+			type == SCHED_FORK_INIT)
+		return;
+
+	cpu = raw_smp_processor_id();
+	t = &per_cpu(trace_inst_data, cpu);
+	entry_cnt = read_instruction_cnt();
+
+	if (t->top > 0) {
+		/* add the inst so far to the parent hook we've interrupted */
+		uint prev_top = t->top - 1;
+		enum trace_type prev_type = t->type_stack[prev_top];
+
+		if (prev_top >= MAX_STACK_DEPTH)
+			/* crossed beyond our stack depth account such things in invalid bucket */
+			prev_type = INVALID;
+
+		t->inst_cnt[prev_type] += entry_cnt - t->last_inst_cnt;
+	}
+
+	t->last_inst_cnt = entry_cnt;
+	t->type_stack[t->top] = type;
+	t->top = t->top + 1;
+}
+
+static inline void update_instruction_data(enum trace_type type)
+{
+	int cpu;
+	struct trace_inst_struct *t;
+	u64 exit_cnt;
+
+	/* some tracehooks can switch, remove them */
+	if (type == WAKEUP_NEW || type == CPU_CGROUP_ATTACH ||
+			type == SCHED_FORK_INIT)
+		return;
+
+	cpu = raw_smp_processor_id();
+	t = &per_cpu(trace_inst_data, cpu);
+	exit_cnt = read_instruction_cnt();
+
+	if (t->top >= MAX_STACK_DEPTH)
+		/* We have consumed our stack depth, account these towards INVALID */
+		type = INVALID;
+	if (t->top == 0)
+		/*
+		 * Likely have migrated and unravelling the stack but no account of the prev stack
+		 * on the new cpu
+		 */
+		type = INVALID;
+
+	/* keep this snippet for stricter checks
+	 * if (t->last_inst_cnt > exit_cnt)
+	 *	 BUG();
+	 *
+	 * if (t->type != type)
+	 *	BUG();
+	 *
+	 * if (t->top == 0)
+	 *	BUG();
+	 */
+
+
+	t->inst_cnt[type] += exit_cnt - t->last_inst_cnt;
+	t->last_inst_cnt = exit_cnt;
+	if (t->top != 0)
+		t->top--;
+
+
+	/* Updating the count at the end of tracehook call */
+	t->count_trace_hook[type]++;
+}
+
+#else
+static inline void get_entry_instr(enum trace_type type) {}
+static inline void update_instruction_data(enum trace_type type) {}
+#endif
+
 #endif /* _WALT_H */

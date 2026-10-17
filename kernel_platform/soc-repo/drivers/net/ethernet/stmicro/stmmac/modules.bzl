@@ -58,6 +58,7 @@ def register_modules(registry):
         deps = [
             # do not sort
             "drivers/net/pcs/pcs-xpcs",
+            "drivers/net/mdio_fe/emac-mdio-fe",
         ],
     )
 
@@ -83,8 +84,8 @@ def register_modules(registry):
     )
 
     registry.register(
-        name = "drivers/net/ethernet/stmicro/stmmac/dwmac-qcom-ethqos",
-        out = "dwmac-qcom-ethqos.ko",
+        name = "drivers/net/ethernet/stmicro/stmmac/dwmac-qcom-eth",
+        out = "dwmac-qcom-eth.ko",
         config = "CONFIG_DWMAC_QCOM_ETHQOS",
         srcs = [
             # do not sort

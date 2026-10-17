@@ -1,1 +1,1 @@
-../../../../../vendor/oplus/kernel/device_info/device_info/device_info.h
+../../../../../vendor/oneplus/sm8850-modules/oplus/kernel/device_info/device_info/device_info.h

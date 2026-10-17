@@ -12,6 +12,7 @@
 
 #include "clk-regmap.h"
 #include "clk-debug.h"
+#include "gdsc.h"
 
 static LIST_HEAD(clk_regmap_list);
 static DEFINE_SPINLOCK(clk_regmap_lock);
@@ -316,6 +317,19 @@ int devm_clk_register_regmap(struct device *dev, struct clk_regmap *rclk)
 }
 EXPORT_SYMBOL_GPL(devm_clk_register_regmap);
 
+/**
+ * devm_clk_regmap_list_node - Add a clk-regmap clock list for providers
+ *
+ * @rclk: clk to operate on
+ *
+ * Maintain clk-regmap clks list for providers use.
+ */
+void devm_clk_regmap_list_node(struct device *dev, struct clk_regmap *rclk)
+{
+	list_add(&rclk->list_node, &clk_regmap_list);
+}
+EXPORT_SYMBOL_GPL(devm_clk_regmap_list_node);
+
 int clk_runtime_get_regmap(struct clk_regmap *rclk)
 {
 	int ret;
@@ -361,3 +375,16 @@ void clk_restore_critical_clocks(struct device *dev)
 					 cclks[i].mask);
 }
 EXPORT_SYMBOL_GPL(clk_restore_critical_clocks);
+
+void gdsc_genpd_pm_restore(struct device *dev)
+{
+	struct qcom_cc_desc *desc = dev_get_drvdata(dev);
+	int i;
+
+	if (!desc || !desc->gdscs || !desc->num_gdscs)
+		return;
+
+	for (i = 0; i < desc->num_gdscs; i++)
+		gdsc_pm_restore(desc->gdscs[i]);
+}
+EXPORT_SYMBOL_GPL(gdsc_genpd_pm_restore);

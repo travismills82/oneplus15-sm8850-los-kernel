@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
-/* Copyright (c) 2022-2025 Qualcomm Innovation Center, Inc. All rights reserved.*/
+/*
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+ */
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
@@ -24,6 +26,8 @@
 #include <linux/gunyah/gh_rm_drv.h>
 #include <linux/gunyah/gh_vm.h>
 #include <linux/firmware/qcom/qcom_scm.h>
+#include <linux/devcoredump.h>
+#include <linux/gunyah/gh_vm.h>
 #include <soc/qcom/secure_buffer.h>
 
 #include "dmesg_dumper_private.h"
@@ -220,6 +224,61 @@ static int qcom_ddump_unshare_mem(struct qcom_dmesg_dumper *qdd, gh_vmid_t self,
 	return ret;
 }
 
+
+#ifdef CONFIG_QCOM_VM_CRASH_DMESG_DUMP
+static int qcom_ddump_handle_vm_exited(struct notifier_block *nb, unsigned long cmd,
+		void *data)
+{
+	gh_vmid_t peer_vmid;
+	void *dump_data;
+	gh_vmid_t *notify_vmid = data;
+	struct qcom_dmesg_dumper *qdd = container_of(nb, struct qcom_dmesg_dumper, vm_crash_nb);
+
+	if (cmd != GUNYAH_QTVM_EXITED)
+		return NOTIFY_DONE;
+
+	if (!qdd->base)
+		return NOTIFY_DONE;
+
+	if (ghd_rm_get_vmid(qdd->peer_name, &peer_vmid)) {
+		dev_err(qdd->dev, "Failed to get VMID from VM name\n");
+		return NOTIFY_DONE;
+	}
+
+	if (peer_vmid != *notify_vmid)
+		return NOTIFY_DONE;
+
+	dump_data = vmalloc(qdd->size);
+	if (!dump_data)
+		return NOTIFY_DONE;
+
+	memcpy(dump_data, qdd->base, qdd->size);
+	dev_coredumpv(qdd->dev, dump_data, qdd->size, GFP_KERNEL);
+
+	return NOTIFY_DONE;
+}
+
+static int qcom_ddump_register_vm_notifier(struct qcom_dmesg_dumper *qdd)
+{
+	qdd->vm_crash_nb.notifier_call = qcom_ddump_handle_vm_exited;
+	qdd->vm_crash_nb.priority = INT_MAX;
+	return gh_register_vm_notifier(&qdd->vm_crash_nb);
+}
+
+static void qcom_ddump_unregister_vm_notifier(struct qcom_dmesg_dumper *qdd)
+{
+	gh_unregister_vm_notifier(&qdd->vm_crash_nb);
+}
+#else
+static int qcom_ddump_register_vm_notifier(struct qcom_dmesg_dumper *qdd)
+{
+	return 0;
+}
+
+static void qcom_ddump_unregister_vm_notifier(struct qcom_dmesg_dumper *qdd)
+{}
+#endif
+
 static int qcom_ddump_vm_cb(struct notifier_block *nb, unsigned long cmd,
 			     void *data)
 {
@@ -301,7 +360,7 @@ static inline int qcom_ddump_gh_kick(struct qcom_dmesg_dumper *qdd)
 	gh_dbl_flags_t dbl_mask = DDUMP_DBL_MASK;
 	int ret;
 
-	ret = gh_dbl_send(qdd->tx_dbl, &dbl_mask, 0);
+	ret = gh_dbl_send(qdd->tx_dbl, &dbl_mask, GH_DBL_NONBLOCK);
 	if (ret)
 		dev_err(qdd->dev, "failed to raise virq to the sender %d\n", ret);
 
@@ -726,6 +785,9 @@ static int qcom_ddump_probe(struct platform_device *pdev)
 		qdd->vm_nb.notifier_call = qcom_ddump_vm_cb;
 		qdd->vm_nb.priority = INT_MAX;
 		gh_register_vm_notifier(&qdd->vm_nb);
+		ret = qcom_ddump_register_vm_notifier(qdd);
+		if (ret)
+			dev_info(qdd->dev, "VM Dmesg dump upon VM crash will not be avaialble\n");
 	} else {
 		res = devm_request_mem_region(dev, qdd->res.start, qdd->size, dev_name(dev));
 		if (!res) {
@@ -781,6 +843,7 @@ static void qcom_ddump_remove(struct platform_device *pdev)
 
 	if (qdd->primary_vm) {
 		gh_unregister_vm_notifier(&qdd->vm_nb);
+		qcom_ddump_unregister_vm_notifier(qdd);
 		ret = ghd_rm_get_vmid(qdd->peer_name, &peer_vmid);
 		if (ret)
 			return;

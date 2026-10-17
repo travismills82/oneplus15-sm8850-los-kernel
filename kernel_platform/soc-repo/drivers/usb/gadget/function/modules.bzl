@@ -140,3 +140,41 @@ def register_modules(registry):
             "arch/arm64/gunyah/gh_arm_drv",
         ],
     )
+
+    registry.register(
+        name = "drivers/usb/gadget/function/usb_f_rmnet_bam",
+        out = "usb_f_rmnet_bam.ko",
+        config = "CONFIG_USB_F_RMNET_BAM",
+        srcs = [
+            # do not sort
+            "drivers/usb/gadget/function/f_rmnet.c",
+            "drivers/usb/gadget/function/u_ctrl_qti.c",
+            "drivers/usb/gadget/function/u_bam_dmux.c",
+        ],
+        hdrs = [
+            "drivers/usb/gadget/function/u_rmnet.h",
+            "drivers/usb/gadget/function/u_data_ipa.h",
+            "drivers/usb/gadget/function/f_qdss.h",
+        ],
+        deps = [
+            # do not sort
+            "drivers/soc/qcom/bam_dmux",
+        ],
+    )
+
+    registry.register(
+        name = "drivers/usb/gadget/function/usb_f_rndis",
+        out = "usb_f_rndis.ko",
+        config = "CONFIG_USB_F_RNDIS",
+        srcs = [
+            # do not sort
+            "drivers/usb/gadget/function/f_rndis.c",
+            "drivers/usb/gadget/function/ndis.h",
+            "drivers/usb/gadget/function/rndis.c",
+            "drivers/usb/gadget/function/rndis.h",
+            "drivers/usb/gadget/function/u_rndis.h",
+            "drivers/usb/gadget/function/u_ether.c",
+            "drivers/usb/gadget/function/u_ether.h",
+            "drivers/usb/gadget/function/u_ether_configfs.h",
+        ],
+    )

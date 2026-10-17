@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2024-2025 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  */
 
 #define pr_fmt(fmt) "si-core: %s: " fmt, __func__
@@ -8,21 +8,30 @@
 #include <linux/kobject.h>
 #include <linux/sysfs.h>
 #include <linux/module.h>
+#include <linux/device.h>
+#include <linux/dma-buf.h>
+#include <linux/platform_device.h>
+#include <linux/of_platform.h>
 #include <linux/init.h>
 #include <linux/slab.h>
 #include <linux/delay.h>
 #include <linux/xarray.h>
+#include <linux/version.h>
 
 #include "si_core.h"
 #include "si_core_adci.h"
+#include "si_core_doorbell.h"
+
+#include "mem-object.h"
 
 #define CREATE_TRACE_POINTS
 #include "trace_si_core.h"
 
 #if IS_ENABLED(CONFIG_QSEECOM_PROXY)
 #include <linux/qseecom_kernel.h>
-#include <soc/qcom/qseecomi.h>
 #endif
+
+static unsigned long long cookie;
 
 /* Static 'Primordial Object' operations. */
 
@@ -88,10 +97,11 @@ static int next_arg_type(struct si_arg u[], int i, enum arg_type type)
 #define SI_OBJECT_ID_START		(SI_OBJECT_PRIMORDIAL + 1)
 #define SI_OBJECT_ID_END		(UINT_MAX)
 
-#define SET_SI_OBJECT(p, type, ...) __SET_SI_OBJECT(p, type, ##__VA_ARGS__, 0UL)
-#define __SET_SI_OBJECT(p, type, optr, ...) do { \
+#define SET_SI_OBJECT(p, type, ...) __SET_SI_OBJECT(p, type, ##__VA_ARGS__, 0UL, 0ULL)
+#define __SET_SI_OBJECT(p, type, optr, ocookie, ...) do { \
 		(p)->object_type = (type); \
 		(p)->info.object_ptr = (unsigned long)(optr); \
+		(p)->info.object_cookie = (unsigned long long)(ocookie); \
 		(p)->release = NULL; \
 	} while (0)
 
@@ -204,6 +214,17 @@ struct si_object *erase_si_object(u32 idx)
 	return xa_erase(&xa_si_objects, idx);
 }
 
+static void release_si_objects(void)
+{
+	unsigned long object_id;
+	struct si_object *object;
+
+	xa_for_each(&xa_si_objects, object_id, object) {
+		erase_si_object(object_id);
+		put_si_object(object);
+	}
+}
+
 static int __free_si_object(struct si_object *object)
 {
 	/* This is used by si-core itself if it requires to do cleanup on the
@@ -217,6 +238,8 @@ static int __free_si_object(struct si_object *object)
 
 	switch (typeof_si_object(object)) {
 	case SI_OT_USER:
+		if (object->info.object_cookie != cookie)
+			break;
 		release_user_object(object);
 
 		break;
@@ -351,7 +374,7 @@ static int init_si_object(struct si_object **object, unsigned int object_id)
 			/* "no-name"; it is not really a reason to fail here!. */
 			t_object->name = kasprintf(GFP_KERNEL, "qtee-%u", object_id);
 
-			SET_SI_OBJECT(t_object, SI_OT_USER, object_id);
+			SET_SI_OBJECT(t_object, SI_OT_USER, object_id, cookie);
 
 			*object = t_object;
 
@@ -467,24 +490,40 @@ static int shmem_alloc(struct si_object_invoke_ctx *oic, struct si_arg u[])
 
 	size = PAGE_ALIGN(size);
 
+#if IS_ENABLED(CONFIG_QCOM_SI_CORE_MEM_FFA)
+	int rc;
+
+	rc = qtee_ffa_shm_alloc(size, OUT_BUFFER_SIZE, &oic->shm);
+	if (rc)
+		return rc;
+
+	oic->in.msg.addr = oic->shm.in_vaddr;
+	oic->in.msg.size = oic->shm.in_size;
+	oic->in.paddr = oic->shm.paddr;
+
+	oic->out.msg.addr = oic->shm.out_vaddr;
+	oic->out.msg.size = oic->shm.out_size;
+	oic->out.paddr = oic->shm.paddr + oic->shm.in_size;
+#else
 	/* Get inbound buffer. */
-	if (qtee_shmbridge_allocate_shm(size, &oic->in.shm))
+	if (qtee_shmbridge_allocate_shm(size, &oic->in_shm))
 		return -ENOMEM;
 
 	/* Get outbound buffer. */
-	if (qtee_shmbridge_allocate_shm(OUT_BUFFER_SIZE, &oic->out.shm)) {
-		qtee_shmbridge_free_shm(&oic->in.shm);
+	if (qtee_shmbridge_allocate_shm(OUT_BUFFER_SIZE, &oic->out_shm)) {
+		qtee_shmbridge_free_shm(&oic->in_shm);
 
 		return -ENOMEM;
 	}
 
-	oic->in.msg.addr = oic->in.shm.vaddr;
+	oic->in.msg.addr = oic->in_shm.vaddr;
 	oic->in.msg.size = size;
-	oic->in.paddr = oic->in.shm.paddr;
+	oic->in.paddr = oic->in_shm.paddr;
 
-	oic->out.msg.addr = oic->out.shm.vaddr;
+	oic->out.msg.addr = oic->out_shm.vaddr;
 	oic->out.msg.size = OUT_BUFFER_SIZE;
-	oic->out.paddr = oic->out.shm.paddr;
+	oic->out.paddr = oic->out_shm.paddr;
+#endif
 
 	/* QTEE assume unused buffers are zeroed; Do it now! */
 	memset(oic->in.msg.addr, 0, oic->in.msg.size);
@@ -522,8 +561,12 @@ static void si_object_invoke_ctx_uninit(struct si_object_invoke_ctx *oic)
 {
 	ida_free(&si_object_invoke_ctxs_ida, oic->context_id);
 
-	qtee_shmbridge_free_shm(&oic->in.shm);
-	qtee_shmbridge_free_shm(&oic->out.shm);
+#if IS_ENABLED(CONFIG_QCOM_SI_CORE_MEM_FFA)
+	qtee_ffa_shm_free(oic->shm);
+#else
+	qtee_shmbridge_free_shm(&oic->in_shm);
+	qtee_shmbridge_free_shm(&oic->out_shm);
+#endif
 }
 
 /* For X_msg functions, on failure we do the cleanup. Because, we could not
@@ -762,7 +805,7 @@ static int update_msg(struct si_object_invoke_ctx *oic)
 
 /* Invoke an 'si_object' instance. */
 
-static void si_object_invoke(struct si_object_invoke_ctx *oic, struct qtee_callback *msg)
+void si_object_invoke(struct si_object_invoke_ctx *oic, struct qtee_callback *msg)
 {
 	int i, errno;
 
@@ -872,6 +915,25 @@ out:
 }
 
 /**
+ * si_object_qtee_objects_put() - Put the callback objects in the argument array.
+ * @u: array of arguments.
+ *
+ * When si_object_do_invoke() is successfully invoked, QTEE takes ownership of
+ * the callback objects. If the invocation fails, si_object_do_invoke() calls
+ * si_object_qtee_objects_put() to mimic the release of callback objects by
+ * QTEE.
+ */
+static void si_object_qtee_objects_put(struct si_arg *u)
+{
+	int i;
+
+	arg_for_each_input_object(i, u) {
+		if (typeof_si_object(u[i].o) == SI_OT_CB_OBJECT)
+			put_si_object(u[i].o);
+	}
+}
+
+/**
  * si_object_do_invoke - Submit an invocation for si_object_invoke_ctx.
  * @oic: context to use for current invocation.
  * @object: object being invoked.
@@ -900,18 +962,28 @@ int si_object_do_invoke(struct si_object_invoke_ctx *oic,
 	struct qtee_callback *cb_msg;
 
 	if (typeof_si_object(object) != SI_OT_USER &&
-		typeof_si_object(object) != SI_OT_ROOT)
+		typeof_si_object(object) != SI_OT_ROOT) {
+		si_object_qtee_objects_put(u);
+		return -EINVAL;
+	}
+
+	if (typeof_si_object(object) == SI_OT_USER &&
+		object->info.object_cookie != cookie)
 		return -EINVAL;
 
 	ret = si_object_invoke_ctx_init(oic, u);
-	if (ret)
+	if (ret) {
+		si_object_qtee_objects_put(u);
 		return ret;
+	}
 
 	pr_debug("start an invocation for %s.\n", si_object_name(object));
 
 	ret = prepare_msg(oic, object, op, u);
-	if (ret)
+	if (ret) {
+		si_object_qtee_objects_put(u);
 		goto out;
+	}
 
 	/* INVOKE remote object!! */
 
@@ -970,9 +1042,7 @@ int si_object_do_invoke(struct si_object_invoke_ctx *oic,
 
 			/* SI_OT_CB_OBJECT input objects are orphan; let's put them. */
 			if (!(oic->flags & OIC_FLAG_QTEE)) {
-				arg_for_each_input_object(i, u)
-					if (typeof_si_object(u[i].o) == SI_OT_CB_OBJECT)
-						put_si_object(u[i].o);
+				si_object_qtee_objects_put(u);
 
 				/* So QTEE is unaawre of this.
 				 * Let the caller know in case they want to do something about it,
@@ -1198,10 +1268,12 @@ ssize_t release_show(struct kobject *kobj, struct kobj_attribute *attr, char *bu
 static struct kobj_attribute ot = __ATTR_RO(ot);
 static struct kobj_attribute po = __ATTR_RO(po);
 static struct kobj_attribute release = __ATTR_RO(release);
+static struct kobj_attribute mo = __ATTR_RO(mem_objects);
 static struct attribute *attrs[] = {
 	&ot.attr,
 	&po.attr,
 	&release.attr,
+	&mo.attr,
 	NULL
 };
 
@@ -1210,7 +1282,8 @@ static struct attribute_group attr_group = {
 };
 
 static struct kobject *si_core_kobj;
-static int __init si_core_init(void)
+
+static int si_core_probe(struct platform_device *pdev)
 {
 	int ret;
 
@@ -1221,30 +1294,128 @@ static int __init si_core_init(void)
 	/* Create '/sys/kernel/si_core'. */
 	si_core_kobj = kobject_create_and_add("si_core", kernel_kobj);
 	if (!si_core_kobj) {
-		destroy_si_core_wq();
-
-		return -ENOMEM;
+		ret = -ENOMEM;
+		goto err_kobj_create;
 	}
 
 	ret = sysfs_create_group(si_core_kobj, &attr_group);
+	if (ret)
+		goto err_sysfs_create;
+
+	ret = dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(64));
+	if (ret)
+		goto err_dma_mask;
+
+	ret = qtee_ffa_shm_init(pdev);
 	if (ret) {
-		kobject_put(si_core_kobj);
-		destroy_si_core_wq();
+		if (ret == -ENODEV)
+			ret = -EPROBE_DEFER;
+		goto err_dma_mask;
 	}
+
+	ret = mem_object_init(pdev);
+	if (ret)
+		goto err_mem_obj_init;
 
 	adci_start();
 
+	ret = si_core_doorbell_init(pdev);
+	if (ret)
+		goto err_irq_setup;
+
+	return 0;
+
+err_irq_setup:
+	adci_shutdown();
+err_mem_obj_init:
+	qtee_ffa_shm_deinit(pdev);
+err_dma_mask:
+	sysfs_remove_group(si_core_kobj, &attr_group);
+err_sysfs_create:
+	kobject_put(si_core_kobj);
+err_kobj_create:
+	destroy_si_core_wq();
 	return ret;
+}
+
+static void si_core_remove(struct platform_device *pdev)
+{
+	/* TODO. Prevent unloading if 'xa_si_objects' is not empty. */
+	si_core_doorbell_deinit(pdev);
+	adci_shutdown();
+	qtee_ffa_shm_deinit(pdev);
+	sysfs_remove_group(si_core_kobj, &attr_group);
+
+	kobject_put(si_core_kobj);
+	destroy_si_core_wq();
+}
+
+static int si_core_pm_freeze(struct device *dev)
+{
+	adci_shutdown();
+	return 0;
+}
+
+static int si_core_pm_restore(struct device *dev)
+{
+	cookie++;
+
+	release_si_objects();
+	adci_start();
+	return 0;
+}
+
+static int si_core_pm_thaw(struct device *dev)
+{
+	adci_start();
+	return 0;
+}
+
+static const struct dev_pm_ops si_core_pm_ops = {
+	.freeze = si_core_pm_freeze,
+	.restore = si_core_pm_restore,
+	.thaw = si_core_pm_thaw,
+};
+
+static const struct of_device_id si_core_match[] = {
+	/* qcom,mem-object is deprecated, only here for backward
+	 * compatibility.
+	 */
+	{ .compatible = "qcom,mem-object", },
+	{ .compatible = "qcom,si-core", }, {}
+};
+
+static struct platform_driver si_core_plat_driver = {
+	.probe = si_core_probe,
+	.remove = si_core_remove,
+	.driver = {
+		.name = "si-core",
+		.of_match_table = si_core_match,
+		.pm = &si_core_pm_ops,
+	},
+};
+
+static int __init si_core_init(void)
+{
+	int ret;
+
+	ret = si_core_ffa_driver_register();
+	if (ret)
+		return ret;
+
+	ret = platform_driver_register(&si_core_plat_driver);
+	if (ret) {
+		si_core_ffa_driver_unregister();
+		return ret;
+	}
+
+	return 0;
 }
 
 static void __exit si_core_exit(void)
 {
-	/* TODO. Prevent unloading if 'xa_si_objects' is not empty. */
-
-	adci_shutdown();
-	sysfs_remove_group(si_core_kobj, &attr_group);
-
-	kobject_put(si_core_kobj);
+	platform_driver_unregister(&si_core_plat_driver);
+	si_core_ffa_driver_unregister();
 }
 
 module_init(si_core_init);
@@ -1252,3 +1423,8 @@ module_exit(si_core_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("SI CORE driver");
+MODULE_IMPORT_NS(DMA_BUF);
+MODULE_SOFTDEP("pre: qcom-scm");
+#if IS_ENABLED(CONFIG_QCOM_SI_CORE_MEM_FFA)
+MODULE_SOFTDEP("pre: arm_ffa arm_ffa_transport");
+#endif

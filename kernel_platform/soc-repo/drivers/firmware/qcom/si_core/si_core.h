@@ -8,6 +8,17 @@
 
 #include <linux/qtee_shmbridge.h>
 #include <linux/firmware/qcom/si_object.h>
+#include <linux/arm_ffa.h>
+#include <linux/platform_device.h>
+#include <linux/scatterlist.h>
+#include <linux/uuid.h>
+
+struct qtee_object_invoke;
+struct qtee_callback;
+
+/* Process callback buffer; used by doorbell. */
+void si_object_invoke(struct si_object_invoke_ctx *oic,
+		      struct qtee_callback *msg);
 
 /* QTEE object ID API. */
 
@@ -36,12 +47,91 @@ void release_user_object(struct si_object *object);
 
 /* ASYNC message management API. */
 
+/* Auto mapping operation. */
+#define OBJECT_OP_AUTO_MAP_SHM 0x00000003UL
+#define OBJECT_OP_AUTO_MAP_FFA 0x00000004UL
+
 void __append__async_reqs(struct si_object_invoke_ctx *oic);
 void __revive__async_queued_reqs(struct si_object_invoke_ctx *oic);
 void __release__async_queued_reqs(struct si_object_invoke_ctx *oic);
 void __fetch__async_reqs(struct si_object_invoke_ctx *oic);
 
+/* FFA related API. */
+
+/* f2266662-48cb-5335-b3f2-a1942a5677aa */
+#define QTEE_SP_FFA_UUID                                                    \
+	UUID_INIT(0xf2266662, 0x48cb, 0x5335, 0xb3, 0xf2, 0xa1, 0x94, 0x2a, 0x56, 0x77, 0xaa)
+
+#ifdef CONFIG_QCOM_SI_CORE_MEM_FFA
+
+int qtee_ffa_mem_share(struct sg_table *sgt, uint64_t tag, u8 attrs, uint64_t *ffa_handle);
+int qtee_ffa_mem_lend(struct sg_table *sgt, uint64_t tag, u8 attrs, uint64_t *ffa_handle);
+int qtee_ffa_mem_reclaim(uint64_t ffa_handle);
+
+int qtee_ffa_shm_alloc(size_t in_size, size_t out_size,
+		       struct ffa_shm *shm);
+void qtee_ffa_shm_free(struct ffa_shm shm);
+
+int qtee_ffa_shm_init(struct platform_device *pdev);
+void qtee_ffa_shm_deinit(struct platform_device *pdev);
+
+int si_core_ffa_driver_register(void);
+void si_core_ffa_driver_unregister(void);
+
+#else
+
+static inline int qtee_ffa_mem_share(struct sg_table *sgt,
+				     uint64_t tag, u8 attrs, uint64_t *ffa_handle)
+{
+	return -EOPNOTSUPP;
+}
+
+static inline int qtee_ffa_mem_lend(struct sg_table *sgt,
+				    uint64_t tag, u8 attrs, uint64_t *ffa_handle)
+{
+	return -EOPNOTSUPP;
+}
+
+static inline int qtee_ffa_mem_reclaim(uint64_t ffa_handle)
+{
+	return -EOPNOTSUPP;
+}
+
+static inline int qtee_ffa_shm_alloc(size_t in_size, size_t out_size,
+				     struct ffa_shm *shm)
+{
+	return -EOPNOTSUPP;
+}
+
+static inline void qtee_ffa_shm_free(struct ffa_shm shm)
+{
+}
+
+static inline int qtee_ffa_shm_init(struct platform_device *pdev)
+{
+	return 0;
+}
+
+static inline void qtee_ffa_shm_deinit(struct platform_device *pdev)
+{
+}
+
+static inline int si_core_ffa_driver_register(void)
+{
+	return 0;
+}
+
+static inline void si_core_ffa_driver_unregister(void)
+{
+}
+
+#endif /* CONFIG_QCOM_SI_CORE_MEM_FFA */
+
 /* ''QTEE'' related definitions. */
+
+#define SMCINVOKE_MIN_ASYNC_VERSION 0x00010002U
+#define SMCINVOKE_ASYNC_VERSION_SHM 0x00010002U
+#define SMCINVOKE_ASYNC_VERSION_FFA 0x00010003U
 
 #define QTEE_RESULT_INBOUND_REQ_NEEDED 3
 
@@ -53,6 +143,16 @@ void __fetch__async_reqs(struct si_object_invoke_ctx *oic);
 #define QTEE_OBJ_NS_BIT (1U << 31)
 
 #define align_offset(o) PTR_ALIGN((o), INVOKE_MESSAGE_ALIGN_BYTES)
+
+#if IS_ENABLED(CONFIG_QSEECOM_PROXY)
+enum qseecom_qceos_cmd_status {
+	QSEOS_RESULT_SUCCESS = 0,
+	QSEOS_RESULT_INCOMPLETE,
+	QSEOS_RESULT_BLOCKED_ON_LISTENER,
+	QSEOS_RESULT_CBACK_REQUEST,
+	QSEOS_RESULT_FAILURE  = 0xFFFFFFFF
+};
+#endif
 
 /* Definitions from QTEE as part of the transport protocol. */
 /* 'qtee_smcinvoke_msg_arg', 'struct qtee_object_invoke', and 'struct qtee_callback'. */
@@ -179,11 +279,8 @@ static inline void err_to_qtee_err(struct qtee_callback *cb_msg, int err)
 
 		break;
 	case -EBADF:
-		cb_msg->result = OBJECT_ERROR_UNAVAIL;
-
-		break;
 	case -EINVAL:
-		cb_msg->result = OBJECT_ERROR_INVALID;
+		cb_msg->result = OBJECT_ERROR_UNAVAIL;
 
 		break;
 	default:

@@ -36,6 +36,16 @@ config EDAC_KRYO_ARM64_PANIC_ON_UE
 	  operating at voltages or frequencies outside normal specification.
 	  For production builds, you should probably say 'N' here.
 
+config EDAC_KRYO_ARM64_PANIC_ON_DE
+	depends on EDAC_KRYO_ARM64
+	bool "Panic on deferred errors - Kryo"
+	help
+	  Forcibly cause a kernel panic on kryo if an deferred error (DE) is
+	  detected, even though the error has (by definition) been deferred.
+	  This can reduce debugging times on hardware which may be operating
+	  at voltages or frequencies outside normal specification.
+	  For production builds, you should definitely say 'N' here.
+
 config EDAC_QCOM
 	tristate "QCOM EDAC Controller"
 	depends on ARCH_QCOM && QCOM_LLCC
@@ -49,5 +59,23 @@ config EDAC_QCOM
 
 	  For debugging issues having to do with stability and overall system
 	  health, you should probably say 'Y' here.
+
+config EDAC_QCOM_LCP
+	bool "QCOM LLCC LCP/SRP DDR DRAM ECC reporting"
+	depends on EDAC_QCOM
+	help
+	  Enables error detection for DDR DRAM single-bit and double-bit ECC
+	  errors reported through the LLCC Last-level Cache Protocol (LCP) /
+	  System Read Protocol (SRP) path.
+
+	  When enabled, a second interrupt handler is registered for
+	  ddrss_apps_interrupt[1]. It reads the LCP/SRP
+	  interrupt status and error-count registers and reports correctable
+	  (SB) and uncorrectable (DB) errors via the EDAC subsystem.
+
+	  Say Y if your platform wires ddrss_apps_interrupt[1] to the GIC and
+	  populates the second interrupt entry in the LLCC DT node.
+	  Say N to save kernel text and avoid requesting the LCP IRQ on
+	  platforms that do not support LCP/SRP ECC reporting.
 
 endmenu

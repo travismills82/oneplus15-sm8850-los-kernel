@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (c) 2012, The Linux Foundation. All rights reserved.
- * Copyright (c) 2023-2025 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  */
 
 #include <linux/build_bug.h>
@@ -1436,8 +1436,9 @@ struct coresight_device *coresight_register(struct coresight_desc *desc)
 		goto out_unlock;
 	}
 
-	if (csdev->type == CORESIGHT_DEV_TYPE_SINK ||
-	    csdev->type == CORESIGHT_DEV_TYPE_LINKSINK) {
+	if ((csdev->type == CORESIGHT_DEV_TYPE_SINK ||
+	     csdev->type == CORESIGHT_DEV_TYPE_LINKSINK) &&
+	    sink_ops(csdev)->alloc_buffer) {
 		ret = etm_perf_add_symlink_sink(csdev);
 
 		if (ret) {
@@ -1606,7 +1607,7 @@ const char *coresight_alloc_device_name(struct coresight_dev_list *dict,
 			list = krealloc_array(dict->fwnode_list,
 					      idx + 1, sizeof(*dict->fwnode_list),
 					      GFP_KERNEL);
-			if (ZERO_OR_NULL_PTR(list)) {
+			if (!list) {
 				idx = -ENOMEM;
 				goto done;
 			}

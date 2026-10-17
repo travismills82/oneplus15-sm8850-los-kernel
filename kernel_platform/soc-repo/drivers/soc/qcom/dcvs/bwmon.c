@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2013-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2025 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  */
 #define pr_fmt(fmt) "qcom-bwmon: " fmt
 
@@ -25,9 +25,6 @@
 #include <linux/sched/walt.h>
 #include <soc/qcom/dcvs.h>
 #include <trace/hooks/sched.h>
-#if IS_ENABLED(CONFIG_OPLUS_FEATURE_GEAS_FDRIVE)
-#include <bwmon_geas.h>
-#endif
 #include "bwmon.h"
 #include "trace-dcvs.h"
 
@@ -387,6 +384,9 @@ store_attr(use_sched_boost, 0U, 1U);
 static BWMON_ATTR_RW(use_sched_boost);
 show_attr(sched_boost_freq);
 store_attr(sched_boost_freq, 0U, 8192000U);
+show_attr(max_freq_max_mbps);
+store_attr(max_freq_max_mbps, 0U, U32_MAX);
+static BWMON_ATTR_RW(max_freq_max_mbps);
 static BWMON_ATTR_RW(sched_boost_freq);
 show_list_attr(mbps_zones, NUM_MBPS_ZONES);
 store_list_attr(mbps_zones, NUM_MBPS_ZONES, 0U, UINT_MAX);
@@ -421,6 +421,7 @@ static struct attribute *bwmon_attrs[] = {
 	&second_vote_limit.attr,
 	&use_sched_boost.attr,
 	&sched_boost_freq.attr,
+	&max_freq_max_mbps.attr,
 	NULL,
 };
 ATTRIBUTE_GROUPS(bwmon);
@@ -479,9 +480,6 @@ static unsigned int mbps_to_bytes(unsigned long mbps, unsigned int ms)
 static int __bw_hwmon_sw_sample_end(struct bw_hwmon *hwmon)
 {
 	struct hwmon_node *node = hwmon->node;
-#if IS_ENABLED(CONFIG_OPLUS_FEATURE_GEAS_FDRIVE)
-	struct hwmon_node_ext *node_ext = &node->geas_frame_bw;
-#endif
 	ktime_t ts;
 	unsigned long bytes, mbps;
 	unsigned int us;
@@ -513,10 +511,6 @@ static int __bw_hwmon_sw_sample_end(struct bw_hwmon *hwmon)
 			wake = DOWN_WAKE;
 	}
 
-#if IS_ENABLED(CONFIG_OPLUS_FEATURE_GEAS_FDRIVE)
-	node_ext->wake = wake;
-	node_ext->irq_raw_mbps = mbps;
-#endif
 	node->prev_ts = ts;
 	node->wake = wake;
 	node->sampled = true;
@@ -569,18 +563,6 @@ static int __bw_hwmon_sample_end(struct bw_hwmon *hwmon)
 		return __bw_hwmon_sw_sample_end(hwmon);
 }
 
-static int bw_hwmon_sample_end(struct bw_hwmon *hwmon)
-{
-	unsigned long flags;
-	int wake;
-
-	spin_lock_irqsave(&sample_irq_lock, flags);
-	wake = __bw_hwmon_sample_end(hwmon);
-	spin_unlock_irqrestore(&sample_irq_lock, flags);
-
-	return wake;
-}
-
 static unsigned long to_mbps_zone(struct hwmon_node *node, unsigned long mbps)
 {
 	int i;
@@ -593,32 +575,10 @@ static unsigned long to_mbps_zone(struct hwmon_node *node, unsigned long mbps)
 }
 
 #define HIST_PEAK_TOL	75
-static unsigned long get_bw_and_set_irq(struct hwmon_node *node,
-					struct dcvs_freq *freq_mbps)
+static inline void bwmon_apply_hist_mem(struct hwmon_node *node,
+					unsigned long meas_mbps)
 {
-	unsigned long meas_mbps, thres, flags, req_mbps, adj_mbps;
-	unsigned long meas_mbps_zone;
-	unsigned long hist_lo_tol, hyst_lo_tol;
-	struct bw_hwmon *hw = node->hw;
-	unsigned int new_bw, io_percent = node->io_percent;
-	ktime_t ts;
-	unsigned int ms = 0;
-
-	spin_lock_irqsave(&sample_irq_lock, flags);
-
-	if (node->use_low_power_io_percent)
-		io_percent = node->low_power_io_percent;
-
-	if (!hw->set_hw_events) {
-		ts = ktime_get();
-		ms = ktime_to_ms(ktime_sub(ts, node->prev_ts));
-	}
-	if (!node->sampled || ms >= node->sample_ms)
-		__bw_hwmon_sample_end(node->hw);
-	node->sampled = false;
-
-	req_mbps = meas_mbps = node->max_mbps;
-	node->max_mbps = 0;
+	unsigned long hist_lo_tol;
 
 	hist_lo_tol = (node->hist_max_mbps * HIST_PEAK_TOL) / 100;
 	/* Remember historic peak in the past hist_mem decision windows. */
@@ -638,39 +598,13 @@ static unsigned long get_bw_and_set_irq(struct hwmon_node *node,
 		if (node->hist_mem)
 			node->hist_mem--;
 	}
+}
 
-	/*
-	 * The AB value that corresponds to the lowest mbps zone greater than
-	 * or equal to the "frequency" the current measurement will pick.
-	 * This upper limit is useful for balancing out any prediction
-	 * mechanisms to be power friendly.
-	 */
-	meas_mbps_zone = (meas_mbps * 100) / io_percent;
-	meas_mbps_zone = to_mbps_zone(node, meas_mbps_zone);
-	meas_mbps_zone = (meas_mbps_zone * io_percent) / 100;
-	meas_mbps_zone = max(meas_mbps, meas_mbps_zone);
-
-	/*
-	 * If this is a wake up due to BW increase, vote much higher BW than
-	 * what we measure to stay ahead of increasing traffic and then set
-	 * it up to vote for measured BW if we see down_count short sample
-	 * windows of low traffic.
-	 */
-	if (node->wake == UP_WAKE) {
-		req_mbps += ((meas_mbps - node->prev_req)
-				* node->up_scale) / 100;
-		/*
-		 * However if the measured load is less than the historic
-		 * peak, but the over request is higher than the historic
-		 * peak, then we could limit the over requesting to the
-		 * historic peak.
-		 */
-		if (req_mbps > node->hist_max_mbps
-		    && meas_mbps < node->hist_max_mbps)
-			req_mbps = node->hist_max_mbps;
-
-		req_mbps = min(req_mbps, meas_mbps_zone);
-	}
+static inline void bwmon_apply_hysteresis(struct hwmon_node *node,
+					unsigned long meas_mbps,
+					unsigned long *req_mbps)
+{
+	unsigned long hyst_lo_tol;
 
 	hyst_lo_tol = (node->hyst_mbps * HIST_PEAK_TOL) / 100;
 	if (meas_mbps > node->hyst_mbps && meas_mbps > node->min_mbps) {
@@ -707,13 +641,22 @@ static unsigned long get_bw_and_set_irq(struct hwmon_node *node,
 
 	if (node->hyst_en) {
 		if (meas_mbps > node->idle_mbps) {
-			req_mbps = max(req_mbps, node->hyst_mbps);
+			*req_mbps = max(*req_mbps, node->hyst_mbps);
 			node->idle_en = node->idle_length;
 		} else if (node->idle_en) {
-			req_mbps = max(req_mbps, node->hyst_mbps);
+			*req_mbps = max(*req_mbps, node->hyst_mbps);
 			node->idle_en--;
 		}
 	}
+
+}
+
+static inline void configure_up_and_down_wake(struct hwmon_node *node,
+					unsigned long meas_mbps,
+					unsigned long req_mbps)
+{
+	struct bw_hwmon *hw = node->hw;
+	unsigned long thres;
 
 	/* Stretch the short sample window size, if the traffic is too low */
 	if (meas_mbps < node->min_mbps) {
@@ -744,8 +687,78 @@ static unsigned long get_bw_and_set_irq(struct hwmon_node *node,
 	}
 
 	node->wake = 0;
-	node->prev_req = req_mbps;
+}
 
+static unsigned long get_bw_and_set_irq(struct hwmon_node *node,
+					struct dcvs_freq *freq_mbps)
+{
+	unsigned long meas_mbps, flags, req_mbps, adj_mbps;
+	unsigned long meas_mbps_zone;
+	struct bw_hwmon *hw = node->hw;
+	unsigned int new_bw, io_percent = node->io_percent;
+	ktime_t ts;
+	unsigned int ms = 0;
+
+	spin_lock_irqsave(&sample_irq_lock, flags);
+
+	if (node->use_low_power_io_percent)
+		io_percent = node->low_power_io_percent;
+
+	if (!hw->set_hw_events) {
+		ts = ktime_get();
+		ms = ktime_to_ms(ktime_sub(ts, node->prev_ts));
+	}
+	if (!node->sampled || ms >= node->sample_ms)
+		__bw_hwmon_sample_end(node->hw);
+	node->sampled = false;
+
+	req_mbps = meas_mbps = node->max_mbps;
+	node->max_mbps = 0;
+
+	bwmon_apply_hist_mem(node, meas_mbps);
+
+	/*
+	 * The AB value that corresponds to the lowest mbps zone greater than
+	 * or equal to the "frequency" the current measurement will pick.
+	 * This upper limit is useful for balancing out any prediction
+	 * mechanisms to be power friendly.
+	 */
+	meas_mbps_zone = (meas_mbps * 100) / io_percent;
+	meas_mbps_zone = to_mbps_zone(node, meas_mbps_zone);
+	meas_mbps_zone = (meas_mbps_zone * io_percent) / 100;
+	meas_mbps_zone = max(meas_mbps, meas_mbps_zone);
+
+	/*
+	 * If this is a wake up due to BW increase, vote much higher BW than
+	 * what we measure to stay ahead of increasing traffic and then set
+	 * it up to vote for measured BW if we see down_count short sample
+	 * windows of low traffic.
+	 */
+	if (node->wake == UP_WAKE) {
+		req_mbps += ((meas_mbps - node->prev_req)
+				* node->up_scale) / 100;
+		/*
+		 * However if the measured load is less than the historic
+		 * peak, but the over request is higher than the historic
+		 * peak, then we could limit the over requesting to the
+		 * historic peak.
+		 */
+		if (req_mbps > node->hist_max_mbps
+		    && meas_mbps < node->hist_max_mbps)
+			req_mbps = node->hist_max_mbps;
+
+		req_mbps = min(req_mbps, meas_mbps_zone);
+	}
+
+	bwmon_apply_hysteresis(node, meas_mbps, &req_mbps);
+
+	configure_up_and_down_wake(node, meas_mbps, req_mbps);
+
+	node->prev_req = req_mbps;
+	if (meas_mbps > node->max_freq_max_mbps)
+		node->bypass_max_freq = true;
+	else
+		node->bypass_max_freq = false;
 	spin_unlock_irqrestore(&sample_irq_lock, flags);
 
 	adj_mbps = req_mbps + node->guard_band_mbps;
@@ -817,7 +830,10 @@ static bool bwmon_update_cur_freq(struct hwmon_node *node)
 	new_freq.ab = MBPS_TO_KHZ(new_freq.ab, hw->dcvs_width);
 	new_freq.ib = MBPS_TO_KHZ(new_freq.ib, hw->dcvs_width);
 	new_freq.ib = max(new_freq.ib, node->min_freq);
-	new_freq.ib = min(new_freq.ib, node->max_freq);
+	if (node->bypass_max_freq)
+		new_freq.ib = min(new_freq.ib, node->hw_max_freq);
+	else
+		new_freq.ib = min(new_freq.ib, node->max_freq);
 	/* sched_boost_freq is intentionally not limited by max_freq */
 	if (node->cur_sched_boost)
 		new_freq.ib = max(new_freq.ib, node->sched_boost_freq);
@@ -888,18 +904,6 @@ static bool should_trigger_low_power_update(struct hwmon_node *node)
 	return ret;
 }
 
-#if IS_ENABLED(CONFIG_OPLUS_FEATURE_GEAS_FDRIVE)
-void init_geas_with_bwmon(struct list_head **list, spinlock_t **lock, spinlock_t **irq_lock, struct workqueue_struct **wq)
-{
-	*list = &hwmon_list;
-	*lock = &list_lock;
-	*irq_lock = &sample_irq_lock;
-	if (wq != NULL)
-		*wq = bwmon_wq;
-}
-EXPORT_SYMBOL(init_geas_with_bwmon);
-#endif
-
 static const u64 HALF_TICK_NS = (NSEC_PER_SEC / HZ) >> 1;
 static void bwmon_jiffies_update_cb(void *unused, void *extra)
 {
@@ -916,10 +920,6 @@ static void bwmon_jiffies_update_cb(void *unused, void *extra)
 		hw = node->hw;
 		if (!hw->is_active)
 			continue;
-#if IS_ENABLED(CONFIG_OPLUS_FEATURE_GEAS_FDRIVE)
-		if (node->geas_frame_bw.frame_drive || node->geas_frame_bw.timer_drive)
-			continue;
-#endif
 		if (node->use_sched_boost) {
 			if (new_boost_state == -1)
 				new_boost_state = should_boost_bus_dcvs();
@@ -976,9 +976,6 @@ static inline void bwmon_monitor_stop(struct bw_hwmon *hw)
 static int update_bw_hwmon(struct bw_hwmon *hw)
 {
 	struct hwmon_node *node = hw->node;
-#if IS_ENABLED(CONFIG_OPLUS_FEATURE_GEAS_FDRIVE)
-	struct hwmon_node_ext *node_ext = &node->geas_frame_bw;
-#endif
 	int ret = 0;
 
 	mutex_lock(&node->mon_lock);
@@ -991,15 +988,6 @@ static int update_bw_hwmon(struct bw_hwmon *hw)
 
 	/* governor update and commit */
 	mutex_lock(&node->update_lock);
-#if IS_ENABLED(CONFIG_OPLUS_FEATURE_GEAS_FDRIVE)
-	if (node_ext->bwmon_irq_handler != NULL && node_ext->bwmon_irq_handler(node)) {
-	        mutex_unlock(&node->update_lock);
-	        bwmon_monitor_start(hw);
-	        mutex_unlock(&node->mon_lock);
-
-		return 0;
-	}
-#endif
 	if (bwmon_update_cur_freq(node))
 		ret = qcom_dcvs_update_votes(dev_name(hw->dev),
 					node->cur_freqs,
@@ -1078,11 +1066,9 @@ static int configure_hwmon_node(struct bw_hwmon *hwmon)
 	node->min_mbps = 1500;
 	node->ab_scale = 100;
 	node->second_ab_scale = 0;
+	node->max_freq_max_mbps = U32_MAX;
 	node->mbps_zones[0] = 0;
 	node->hw = hwmon;
-#if IS_ENABLED(CONFIG_OPLUS_FEATURE_GEAS_FDRIVE)
-	node->geas_frame_bw.node = node;
-#endif
 
 	mutex_init(&node->mon_lock);
 	mutex_init(&node->update_lock);
@@ -1738,12 +1724,25 @@ static irqreturn_t
 __bwmon_intr_handler(int irq, void *dev, enum mon_reg_type type)
 {
 	struct bwmon *m = dev;
+	unsigned long flags;
+	u32 intr_status;
+	int wake;
 
-	m->intr_status = mon_irq_status(m, type);
-	if (!m->intr_status)
+	intr_status = mon_irq_status(m, type);
+	if (!intr_status)
 		return IRQ_NONE;
 
-	if (bw_hwmon_sample_end(&m->hw) > 0)
+	/*
+	 * Assign m->intr_status inside sample_irq_lock to prevent a data
+	 * race with get_zone(), which reads m->intr_status while holding
+	 * the same lock from the workqueue path.
+	 */
+	spin_lock_irqsave(&sample_irq_lock, flags);
+	m->intr_status = intr_status;
+	wake = __bw_hwmon_sample_end(&m->hw);
+	spin_unlock_irqrestore(&sample_irq_lock, flags);
+
+	if (wake > 0)
 		return IRQ_WAKE_THREAD;
 
 	return IRQ_HANDLED;
@@ -1767,12 +1766,6 @@ static irqreturn_t bwmon_intr_handler3(int irq, void *dev)
 static irqreturn_t bwmon_intr_thread(int irq, void *dev)
 {
 	struct bwmon *m = dev;
-#if IS_ENABLED(CONFIG_OPLUS_FEATURE_GEAS_FDRIVE)
-	struct hwmon_node *node = (&m->hw)->node;
-	struct hwmon_node_ext *node_ext = &node->geas_frame_bw;
-	if ((node_ext->frame_drive || node_ext->timer_drive) && !node_ext->enable_irq)
-		return IRQ_HANDLED;
-#endif
 
 	update_bw_hwmon(&m->hw);
 	return IRQ_HANDLED;

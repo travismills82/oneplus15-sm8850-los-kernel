@@ -1,9 +1,12 @@
+load(":soc_repo_path.bzl", "SOC_MODULES_REPO_PATH")
 load(":drivers/leds/flash/modules.bzl", register_flash = "register_modules")
 load(":drivers/leds/rgb/modules.bzl", register_rgb = "register_modules")
+load(":drivers/leds/aw210xx/modules.bzl", register_aw210xx= "register_modules")
 
 def register_modules(registry):
     register_flash(registry)
     register_rgb(registry)
+    register_aw210xx(registry)
 
     registry.register(
         name = "drivers/leds/leds-qti-flash",
@@ -15,7 +18,7 @@ def register_modules(registry):
         ],
         deps = [
             # do not sort
-            "//vendor/oplus/kernel/charger/bazel:{target_variant}_oplus_chg_v2",
+            "//{}/oplus/kernel/charger/bazel:{{target_variant}}_oplus_chg_v2".format(SOC_MODULES_REPO_PATH),
             "drivers/soc/qcom/panel_event_notifier",
             "drivers/soc/qcom/qti_pmic_glink",
             "drivers/soc/qcom/pdr_interface",
@@ -51,12 +54,102 @@ def register_modules(registry):
     )
 
     registry.register(
+        name = "drivers/leds/trigger/ledtrig-netdev",
+        out = "ledtrig-netdev.ko",
+        config = "CONFIG_LEDS_TRIGGER_NETDEV",
+        srcs = [
+            # do not sort
+            "drivers/leds/trigger/ledtrig-netdev_fixed.c",
+            "drivers/leds/leds.h",
+        ],
+    )
+
+    registry.register(
         name = "drivers/leds/leds-qpnp-vibrator-ldo",
         out = "leds-qpnp-vibrator-ldo.ko",
         config = "CONFIG_LEDS_QPNP_VIBRATOR_LDO",
         srcs = [
             # do not sort
             "drivers/leds/leds-qpnp-vibrator-ldo.c",
+        ],
+        deps = [
+            # do not sort
+        ],
+    )
+
+    registry.register(
+        name = "drivers/leds/leds-aw2016",
+        out = "leds-aw2016.ko",
+        config = "CONFIG_LEDS_AW2016",
+        srcs = [
+            # do not sort
+            "drivers/leds/leds-aw2016.c",
+            "drivers/leds/leds-aw2016.h",
+        ],
+        deps = [
+            # do not sort
+        ],
+    )
+
+    registry.register(
+        name = "drivers/leds/leds-user-aw21104",
+        out = "leds-user-aw21104.ko",
+        config = "CONFIG_LEDS_USER_AW21104",
+        srcs = [
+            # do not sort
+            "drivers/leds/leds-user-aw21104.c",
+        ],
+        deps = [
+            # do not sort
+        ],
+    )
+
+    registry.register(
+        name = "drivers/leds/leds-bys-aw21104",
+        out = "leds-bys-aw21104.ko",
+        config = "CONFIG_LEDS_BYS_AW21104",
+        srcs = [
+            # do not sort
+            "drivers/leds/leds-bys-aw21104.c",
+        ],
+        deps = [
+            # do not sort
+        ],
+    )
+
+    registry.register(
+        name = "drivers/leds/leds-user-lp5814",
+        out = "leds-user-lp5814.ko",
+        config = "CONFIG_LEDS_USER_LP5814",
+        srcs = [
+            # do not sort
+            "drivers/leds/leds-user-lp5814.c",
+        ],
+        deps = [
+            # do not sort
+        ],
+    )
+
+    registry.register(
+        name = "drivers/leds/leds-etirled-lm3645",
+        out = "leds-etirled-lm3645.ko",
+        config = "CONFIG_LEDS_ETIRLED_LM3645",
+        srcs = [
+            # do not sort
+            "drivers/leds/leds-etirled-lm3645.c",
+        ],
+        deps = [
+            # do not sort
+        ],
+    )
+
+    registry.register(
+        name = "drivers/leds/leds-aw200xx",
+        out = "leds-aw200xx.ko",
+        config = "CONFIG_LEDS_AW200XX",
+        srcs = [
+            # do not sort
+            "drivers/leds/leds-aw200xx.c",
         ],
         deps = [
             # do not sort

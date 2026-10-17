@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2022-2025 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  */
-
 
 #include <linux/init.h>
 #include <linux/module.h>
@@ -140,4 +139,5 @@ module_exit(rename_devices_exit);
 MODULE_DESCRIPTION("Rename devices");
 MODULE_LICENSE("GPL");
 MODULE_SOFTDEP("pre: virtio_blk");
+MODULE_SOFTDEP("pre: virtio_block");
 MODULE_SOFTDEP("pre: virtio_mmio");

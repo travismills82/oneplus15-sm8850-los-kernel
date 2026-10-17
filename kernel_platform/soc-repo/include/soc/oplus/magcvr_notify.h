@@ -1,1 +1,1 @@
-../../../../../vendor/oplus/kernel/device_info/magnetic_cover/magtransfer/magcvr_notify.h
+../../../../../vendor/oneplus/sm8850-modules/oplus/kernel/device_info/magnetic_cover/magtransfer/magcvr_notify.h

@@ -1,6 +1,7 @@
-load("//build/bazel_common_rules/dist:dist.bzl", "copy_to_dist_dir")
 load("//build/kernel/kleaf:hermetic_tools.bzl", "hermetic_genrule")
 load(":kleaf-scripts/msm_common.bzl", "get_out_dir")
+load("@rules_pkg//pkg:install.bzl", "pkg_install")
+load("@rules_pkg//pkg:mappings.bzl", "pkg_attributes", "pkg_files", "strip_prefix")
 
 def define_dtc_dist(target, msm_target, variant):
     """Create distribution targets for device tree compiler and associated tools
@@ -51,11 +52,26 @@ def define_dtc_dist(target, msm_target, variant):
         actual = ":{}_dtc_tarball".format(target),
     )
 
-    copy_to_dist_dir(
+    for (kind, targets, mode) in [
+        ("bin", dtc_bin_targets, "755"),
+        ("lib", dtc_lib_targets, "755"),
+        ("include", dtc_inc_targets, "644"),
+    ]:
+        pkg_files(
+            name = "{}_dtc_{}_files".format(target, kind),
+            srcs = targets,
+            prefix = kind,
+            attributes = pkg_attributes(mode = mode),
+            strip_prefix = strip_prefix.files_only(),
+            visibility = ["//visibility:private"],
+        )
+
+    pkg_install(
         name = "{}_dtc_dist".format(target),
-        archives = [":{}_dtc_tarball".format(target)],
-        dist_dir = "{}/host".format(get_out_dir(msm_target, variant)),
-        flat = True,
-        wipe_dist_dir = True,
-        log = "info",
+        srcs = [
+            ":{}_dtc_bin_files".format(target),
+            ":{}_dtc_lib_files".format(target),
+            ":{}_dtc_include_files".format(target),
+        ],
+        destdir = "{}/host".format(get_out_dir(msm_target, variant)),
     )

@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2025, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  */
 
 #include <linux/platform_device.h>
@@ -88,17 +88,58 @@
 #define LLCC_GPU_LITTLE       80
 #define LLCC_OOBM_NS          81
 #define LLCC_OOBM_S           82
-#define LLCC_CPUSSMPAM        89
-#define LLCC_CPU_MTE          35
 #define LLCC_VIDEO_APV        83
+#define LLCC_DCP              86
 #define LLCC_COMPUTE1         87
+#define LLCC_CPUSSMPAM        89
+/* Backward-compatible aliases for the same usecase IDs. */
+#define LLCC_CPU_MTE          LLCC_CPUMTE
 #define LLCC_CPUSS_OPP        88
-#define LLCC_CPUSS_MPAM1      89
+#define LLCC_CPUSS_MPAM1      LLCC_CPUSSMPAM
 #define LLCC_PARTIALWRITES    90
 #define LLCC_CAM_IPE_STROV    92
+/* Target-specific alias sharing ID 89 on some SoCs. */
+#define LLCC_PCIE_TCU         LLCC_CPUSSMPAM
 #define LLCC_CAM_OFE_STROV    93
 #define LLCC_CPUSS_HEU        94
 #define LLCC_MDM_PNG_FIXED   100
+#define LLCC_GPU_LAYERS        256
+#define LLCC_GPU_TEMP_DATA     257
+#define LLCC_VIDSC_LAYER0      258
+#define LLCC_VIDSC_LAYER1      259
+#define LLCC_VIDSC_LAYER2      260
+#define LLCC_VIDSC_LAYER3      261
+#define LLCC_VIDSC_LAYER4      262
+#define LLCC_VIDSC_LAYER5      263
+#define LLCC_VIDSC_LAYER6      264
+#define LLCC_VIDSC_LAYER7      265
+#define LLCC_CSC_LAYER0        266
+#define LLCC_CSC_LAYER1        267
+#define LLCC_CSC_LAYER2        268
+#define LLCC_CSC_LAYER3        269
+#define LLCC_CSC_LAYER4        270
+#define LLCC_CSC_LAYER5        271
+#define LLCC_CSC_LAYER6        272
+#define LLCC_CSC_LAYER7        273
+#define LLCC_CSC_LAYER8        274
+#define LLCC_CSC_LAYER9        275
+#define LLCC_CSC_LAYER10       276
+#define LLCC_CSC_LAYER11       277
+#define LLCC_CSC_LAYER12       278
+#define LLCC_CSC_LAYER13       279
+#define LLCC_CSC_LAYER14       280
+#define LLCC_CSC_LAYER15       281
+#define LLCC_GCX_TO_DPU_LEFT   282
+#define LLCC_GCX_TO_DPU_RIGHT  283
+#define LLCC_VIDSC_DEPTH0      284
+#define LLCC_VIDSC_DEPTH1      285
+#define LLCC_TCM_WIFI          286
+#define LLCC_TCM_CAM           287
+#define LLCC_TCM_OEM           288
+#define LLCC_CAM_TF_BUFFER     289
+#define LLCC_CAM_IPE_BUFFER    290
+#define LLCC_CAM_META_ADVANCED 291
+#define LLCC_CAM_IPE_CSC       292
 
 #define LLCC_VERSION_2_0_0_0          0x02000000
 #define LLCC_VERSION_2_1_0_0          0x02010000
@@ -138,6 +179,8 @@ struct llcc_edac_reg_data {
 
 struct llcc_edac_reg_offset {
 	/* LLCC TRP registers */
+	u32 trp_ecc_error_inject_0;
+	u32 trp_ecc_error_inject_1;
 	u32 trp_ecc_error_status0;
 	u32 trp_ecc_error_status1;
 	u32 trp_ecc_sb_err_syn0;
@@ -153,6 +196,8 @@ struct llcc_edac_reg_offset {
 	u32 cmn_interrupt_2_enable;
 
 	/* LLCC DRP registers */
+	u32 drp_ecc_error_inject_0;
+	u32 drp_ecc_error_inject_1;
 	u32 drp_ecc_error_cfg;
 	u32 drp_ecc_error_cntr_clear;
 	u32 drp_interrupt_status;
@@ -162,6 +207,27 @@ struct llcc_edac_reg_offset {
 	u32 drp_ecc_error_status1;
 	u32 drp_ecc_sb_err_syn0;
 	u32 drp_ecc_db_err_syn0;
+
+	/*
+	 * LCP/SRP DDR DRAM ECC registers (LLCC broadcast space).
+	 * Zero means LCP reporting is not available on this platform.
+	 * Populated only when CONFIG_EDAC_QCOM_LCP is enabled.
+	 */
+	u32 cmn_interrupt_1_enable;
+	u32 lcp_clock_ctrl;
+	u32 lcp_srp_ecc_error_cfg;
+	u32 lcp_srp_ecc_error_cntr_clear;
+	u32 lcp_srp_ecc_error_inject_0;
+	u32 lcp_srp_ecc_error_inject_1;
+	u32 lcp_srp_interrupt_clear;
+	u32 lcp_srp_interrupt_enable;
+	u32 lcp_srp_interrupt_status;
+	u32 lcp_srp_ecc_error_status1;
+};
+
+struct llcc_uid_slice_pair {
+	uint32_t uid;
+	struct llcc_slice_desc *desc;
 };
 
 /**
@@ -178,8 +244,12 @@ struct llcc_edac_reg_offset {
  * @num_banks: Number of llcc banks
  * @bitmap: Bit map to track the active slice ids
  * @ecc_irq: interrupt for llcc cache error detection and reporting
+ * @lcp_irq: interrupt for LCP/SRP DDR DRAM ECC error reporting (or -ENXIO)
+ * @ecc_irq_configured: true when firmware already configured LLCC ECC routing
  * @version: Indicates the LLCC version
  * @desc: Array pointer of llcc_slice_desc
+ * @uid_slice_lookup: Lookup form UID to slice desc
+ * @sct_initialized: Indicates that SCT is already initialized outside llcc-qcom
  */
 struct llcc_drv_data {
 	struct regmap **regmaps;
@@ -194,9 +264,13 @@ struct llcc_drv_data {
 	u32 num_banks;
 	unsigned long *bitmap;
 	int ecc_irq;
+	int lcp_irq;
+	bool ecc_irq_configured;
 	u32 version;
 	bool cap_based_alloc_and_pwr_collapse;
 	struct llcc_slice_desc *desc;
+	struct llcc_uid_slice_pair *uid_slice_lookup;
+	bool sct_initialized;
 };
 
 /**
@@ -223,6 +297,17 @@ struct llcc_staling_mode_params {
 			enum llcc_staling_notify_op op;
 		} notify_params;
 	};
+};
+
+
+/**
+ * llcc_tcm_data - Data associated with the llcc tcm driver
+ *
+ */
+struct llcc_tcm_data {
+	phys_addr_t phys_addr;
+	void __iomem *virt_addr;
+	size_t mem_size;
 };
 
 #if IS_ENABLED(CONFIG_QCOM_LLCC)
@@ -272,6 +357,41 @@ int llcc_slice_deactivate(struct llcc_slice_desc *desc);
  *
  * Returns: zero on success or negative errno.
  */
+
+/**
+ * llcc_tcm_activate - Activate llcc tcm
+ */
+struct llcc_tcm_data *llcc_tcm_activate(void);
+
+/**
+ * llcc_tcm_get_phys_addr - get the physical address of llcc tcm slice
+ */
+phys_addr_t llcc_tcm_get_phys_addr(struct llcc_tcm_data *tcm_data);
+
+/**
+ * llcc_tcm_get_virt_addr - get the virtual address of llcc tcm slice
+ */
+void __iomem *llcc_tcm_get_virt_addr(struct llcc_tcm_data *tcm_data);
+
+/**
+ * llcc_tcm_get_slice_size - get the llcc tcm slice size
+ */
+size_t llcc_tcm_get_slice_size(struct llcc_tcm_data *tcm_data);
+
+/**
+ * llcc_tcm_deactivate - Deactivate the llcc tcm
+ */
+void llcc_tcm_deactivate(struct llcc_tcm_data *tcm_data);
+/**
+ * llcc_tcm_trigger_access - Issue bounded reads/writes into LLCC TCM
+ * @tcm_data: Pointer to the llcc tcm descriptor
+ * @len: Number of bytes to touch
+ * @pattern: Pattern seed used while generating traffic
+ *
+ * Returns zero on success or a negative errno.
+ */
+int llcc_tcm_trigger_access(struct llcc_tcm_data *tcm_data, size_t len,
+			    u32 pattern);
 int llcc_configure_staling_mode(struct llcc_slice_desc *desc,
 				struct llcc_staling_mode_params *p);
 /**
@@ -311,6 +431,38 @@ static inline int llcc_slice_deactivate(struct llcc_slice_desc *desc)
 {
 	return -EINVAL;
 }
+
+static inline struct llcc_tcm_data *llcc_tcm_activate(void)
+{
+	return NULL;
+}
+
+static inline phys_addr_t llcc_tcm_get_phys_addr(struct llcc_tcm_data *tcm_data)
+{
+	return 0;
+}
+
+static inline void __iomem *llcc_tcm_get_virt_addr(struct llcc_tcm_data *tcm_data)
+{
+	return NULL;
+}
+
+static inline size_t llcc_tcm_get_slice_size(struct llcc_tcm_data *tcm_data)
+{
+	return 0;
+}
+
+static inline void llcc_tcm_deactivate(struct llcc_tcm_data *tcm_data)
+{
+
+}
+
+static inline int llcc_tcm_trigger_access(struct llcc_tcm_data *tcm_data,
+					  size_t len, u32 pattern)
+{
+	return -EINVAL;
+}
+
 static inline int llcc_configure_staling_mode(struct llcc_slice_desc *desc,
 				       struct llcc_staling_mode_params *p)
 {

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: (GPL-2.0 OR MIT)
 /*
  * Copyright (c) 2018 Synopsys, Inc. and/or its affiliates.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  * stmmac XGMAC support.
  */
 
@@ -259,9 +260,17 @@ static void dwxgmac2_map_mtl_to_dma(struct mac_device_info *hw, u32 queue,
 	void __iomem *ioaddr = hw->pcsr;
 	u32 value, reg;
 
-	reg = (queue < 4) ? XGMAC_MTL_RXQ_DMA_MAP0 : XGMAC_MTL_RXQ_DMA_MAP1;
-	if (queue >= 4)
+	if (queue < 4) {
+		reg = XGMAC_MTL_RXQ_DMA_MAP0;
+	} else if (queue < 8) {
+		reg = XGMAC_MTL_RXQ_DMA_MAP1;
 		queue -= 4;
+	} else if (queue < 12) {
+		reg = XGMAC_MTL_RXQ_DMA_MAP2;
+		queue -= 8;
+	} else {
+		return;
+	}
 
 	value = readl(ioaddr + reg);
 	value &= ~XGMAC_QxMDMACH(queue);
@@ -368,7 +377,7 @@ static void dwxgmac2_flow_ctrl(struct mac_device_info *hw, unsigned int duplex,
 	if (fc & FLOW_RX)
 		writel(XGMAC_RFE, ioaddr + XGMAC_RX_FLOW_CTRL);
 	if (fc & FLOW_TX) {
-		for (i = 0; i < tx_cnt; i++) {
+		for (i = 0; i < min(tx_cnt, XGMAC_MAX_TC); i++) {
 			u32 value = XGMAC_TFE;
 
 			if (duplex)
@@ -956,6 +965,47 @@ dwxgmac3_safety_feat_config(void __iomem *ioaddr, unsigned int asp,
 	return 0;
 }
 
+static int dwxgmac3_safety_feat_disable(void __iomem *ioaddr)
+{
+	u32 value;
+
+	/* Disable MTL ECC Interrupts */
+	writel(0x0, ioaddr + XGMAC_MTL_ECC_INT_ENABLE);
+
+	/* Disable DMA ECC Interrupts */
+	writel(0x0, ioaddr + XGMAC_DMA_ECC_INT_ENABLE);
+
+	/* Disable FSM Parity and Timeout */
+	value = readl(ioaddr + XGMAC_MAC_FSM_CONTROL);
+	value &= ~(XGMAC_PRTYEN | XGMAC_TMOUTEN);
+	writel(value, ioaddr + XGMAC_MAC_FSM_CONTROL);
+
+	/* CRITICAL: Explicitly disable Data Path Parity
+	 * DPP may be enabled by hardware default, causing errors
+	 */
+	value = readl(ioaddr + XGMAC_MTL_DPP_CONTROL);
+	value |= XGMAC_DPP_DISABLE;
+	writel(value, ioaddr + XGMAC_MTL_DPP_CONTROL);
+
+	/* Disable ECC Control */
+	writel(0x0, ioaddr + XGMAC_MTL_ECC_CONTROL);
+
+	/* Clear any pending safety interrupts */
+	value = readl(ioaddr + XGMAC_MTL_SAFETY_INT_STATUS);
+	writel(value, ioaddr + XGMAC_MTL_SAFETY_INT_STATUS);
+
+	value = readl(ioaddr + XGMAC_DMA_SAFETY_INT_STATUS);
+	writel(value, ioaddr + XGMAC_DMA_SAFETY_INT_STATUS);
+
+	value = readl(ioaddr + XGMAC_DMA_ECC_INT_STATUS);
+	writel(value, ioaddr + XGMAC_DMA_ECC_INT_STATUS);
+
+	value = readl(ioaddr + XGMAC_DMA_DPP_INT_STATUS);
+	writel(value, ioaddr + XGMAC_DMA_DPP_INT_STATUS);
+
+	return 0;
+}
+
 static int dwxgmac3_safety_feat_irq_status(struct net_device *ndev,
 					   void __iomem *ioaddr,
 					   unsigned int asp,
@@ -1309,6 +1359,35 @@ static void dwxgmac2_sarc_configure(void __iomem *ioaddr, int val)
 	writel(value, ioaddr + XGMAC_TX_CONFIG);
 }
 
+static void dwxgmac2_rx_hw_vlan(struct mac_device_info *hw,
+				struct dma_desc *rx_desc, struct sk_buff *skb)
+{
+	if (hw->desc->get_rx_vlan_valid(rx_desc)) {
+		u16 vid = hw->desc->get_rx_vlan_tci(rx_desc);
+
+		__vlan_hwaccel_put_tag(skb, htons(ETH_P_8021Q), vid);
+	}
+}
+
+static void dwxgmac2_set_hw_vlan_mode(struct mac_device_info *hw)
+{
+	void __iomem *ioaddr = hw->pcsr;
+	u32 value = readl(ioaddr + XGMAC_VLAN_TAG);
+
+	value &= ~VLAN_TAG_CTRL_EVLS_MASK;
+
+	if (hw->hw_vlan_en)
+		/* Always strip VLAN on Receive */
+		value |= VLAN_TAG_STRIP_ALL;
+	else
+		/* Do not strip VLAN on Receive */
+		value |= VLAN_TAG_STRIP_NONE;
+
+	/* Enable outer VLAN Tag in Rx DMA descriptor */
+	value |= VLAN_TAG_CTRL_EVLRXS;
+	writel(value, ioaddr + XGMAC_VLAN_TAG);
+}
+
 static void dwxgmac2_enable_vlan(struct mac_device_info *hw, u32 type)
 {
 	void __iomem *ioaddr = hw->pcsr;
@@ -1539,6 +1618,34 @@ static void dwxgmac3_fpe_configure(void __iomem *ioaddr,
 	writel(value, ioaddr + XGMAC_FPE_CTRL_STS);
 }
 
+static void dwxgmac2_flush_tx_mtl(struct stmmac_priv *priv, struct mac_device_info *hw,
+				  u32 queue)
+{
+	void __iomem *ioaddr = hw->pcsr;
+	const struct dwxgmac_addrs *dwxgmac_addrs = priv->plat->dwxgmac_addrs;
+	u32 vy_count = 0;
+	unsigned long RETRYCOUNT = 1000;
+	u32 ftq = 0;
+
+	/* Flush Tx Queue */
+	ftq = readl(ioaddr + XGMAC_MTL_TXQ_OPMODE(dwxgmac_addrs, queue));
+	ftq |= 1;
+	writel(ftq, ioaddr + XGMAC_MTL_TXQ_OPMODE(dwxgmac_addrs, queue));
+
+	/* Poll Until Poll Condition */
+	while (1) {
+		if (vy_count > RETRYCOUNT) {
+			pr_err("unable to flush tx queue %d\n", queue);
+			break;
+		}
+		vy_count++;
+		usleep_range(1000, 1500);
+		ftq = readl(ioaddr + XGMAC_MTL_TXQ_OPMODE(dwxgmac_addrs, queue));
+		if (((ftq) & (0x1)) == 0)
+			break;
+	}
+}
+
 const struct stmmac_ops dwxgmac210_ops = {
 	.core_init = dwxgmac2_core_init,
 	.set_mac = dwxgmac2_set_mac,
@@ -1566,6 +1673,7 @@ const struct stmmac_ops dwxgmac210_ops = {
 	.debug = NULL,
 	.set_filter = dwxgmac2_set_filter,
 	.safety_feat_config = dwxgmac3_safety_feat_config,
+	.safety_feat_disable = dwxgmac3_safety_feat_disable,
 	.safety_feat_irq_status = dwxgmac3_safety_feat_irq_status,
 	.safety_feat_dump = dwxgmac3_safety_feat_dump,
 	.set_mac_loopback = dwxgmac2_set_mac_loopback,
@@ -1576,10 +1684,13 @@ const struct stmmac_ops dwxgmac210_ops = {
 	.flex_pps_config = dwxgmac2_flex_pps_config,
 	.sarc_configure = dwxgmac2_sarc_configure,
 	.enable_vlan = dwxgmac2_enable_vlan,
+	.rx_hw_vlan = dwxgmac2_rx_hw_vlan,
+	.set_hw_vlan_mode = dwxgmac2_set_hw_vlan_mode,
 	.config_l3_filter = dwxgmac2_config_l3_filter,
 	.config_l4_filter = dwxgmac2_config_l4_filter,
 	.set_arp_offload = dwxgmac2_set_arp_offload,
 	.fpe_configure = dwxgmac3_fpe_configure,
+	.flush_tx_mtl = dwxgmac2_flush_tx_mtl,
 };
 
 static void dwxlgmac2_rx_queue_enable(struct mac_device_info *hw, u8 mode,
@@ -1623,6 +1734,7 @@ const struct stmmac_ops dwxlgmac2_ops = {
 	.debug = NULL,
 	.set_filter = dwxgmac2_set_filter,
 	.safety_feat_config = dwxgmac3_safety_feat_config,
+	.safety_feat_disable = dwxgmac3_safety_feat_disable,
 	.safety_feat_irq_status = dwxgmac3_safety_feat_irq_status,
 	.safety_feat_dump = dwxgmac3_safety_feat_dump,
 	.set_mac_loopback = dwxgmac2_set_mac_loopback,
@@ -1633,6 +1745,8 @@ const struct stmmac_ops dwxlgmac2_ops = {
 	.flex_pps_config = dwxgmac2_flex_pps_config,
 	.sarc_configure = dwxgmac2_sarc_configure,
 	.enable_vlan = dwxgmac2_enable_vlan,
+	.rx_hw_vlan = dwxgmac2_rx_hw_vlan,
+	.set_hw_vlan_mode = dwxgmac2_set_hw_vlan_mode,
 	.config_l3_filter = dwxgmac2_config_l3_filter,
 	.config_l4_filter = dwxgmac2_config_l4_filter,
 	.set_arp_offload = dwxgmac2_set_arp_offload,

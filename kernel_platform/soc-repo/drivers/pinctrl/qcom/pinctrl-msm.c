@@ -157,6 +157,30 @@ struct msm_tile {
 	u32 dir_con_regs[8];
 };
 
+int msm_gpio_get_dir_conn_irq(int gpio_irq)
+{
+	struct msm_pinctrl *pctrl = msm_pinctrl_data;
+	struct msm_dir_conn *dc;
+	struct irq_data *irqd;
+	int i;
+
+	if (!pctrl)
+		return -ENODEV;
+
+	irqd = irq_get_irq_data(gpio_irq);
+	if (!irqd)
+		return -EINVAL;
+
+	for (i = 0; i <= pctrl->n_dir_conns; i++) {
+		dc = &pctrl->soc->dir_conn[i];
+		if (dc->gpio == irqd->hwirq)
+			return dc->irq;
+	}
+
+	return -EINVAL;
+}
+EXPORT_SYMBOL_GPL(msm_gpio_get_dir_conn_irq);
+
 static void msm_ack_intr_status(struct msm_pinctrl *pctrl,
 				const struct msm_pingroup *g)
 {
@@ -1829,7 +1853,8 @@ static int pinctrl_hibernation_notifier(struct notifier_block *nb,
 	struct msm_pinctrl *pctrl = msm_pinctrl_data;
 	const struct msm_pinctrl_soc_data *soc = pctrl->soc;
 
-	if (event == PM_HIBERNATION_PREPARE) {
+	if ((event == PM_HIBERNATION_PREPARE) || ((event == PM_SUSPEND_PREPARE)
+			       && (pm_suspend_target_state == PM_SUSPEND_MEM))) {
 		pctrl->gpio_regs = kcalloc(soc->ngroups,
 			sizeof(*pctrl->gpio_regs), GFP_KERNEL);
 		if (pctrl->gpio_regs == NULL)
@@ -1843,7 +1868,8 @@ static int pinctrl_hibernation_notifier(struct notifier_block *nb,
 			}
 		}
 		pctrl->hibernation = true;
-	} else if (event == PM_POST_HIBERNATION) {
+	} else if ((event == PM_POST_HIBERNATION) || ((event == PM_POST_SUSPEND)
+			       && (pm_suspend_target_state == PM_SUSPEND_MEM))) {
 		kfree(pctrl->gpio_regs);
 		kfree(pctrl->msm_tile_regs);
 		pctrl->gpio_regs = NULL;
@@ -1862,6 +1888,7 @@ static int msm_pinctrl_hibernation_suspend(void)
 	const struct msm_pingroup *pgroup;
 	struct msm_pinctrl *pctrl = msm_pinctrl_data;
 	const struct msm_pinctrl_soc_data *soc = pctrl->soc;
+	struct gpio_chip *chip = &pctrl->chip;
 	void __iomem *tile_addr = NULL;
 	u32 i, j;
 
@@ -1884,6 +1911,9 @@ static int msm_pinctrl_hibernation_suspend(void)
 
 	/* All normal gpios will have common registers, first save them */
 	for (i = 0; i < soc->ngpios; i++) {
+		if (!test_bit(i, chip->valid_mask))
+			continue;
+
 		pgroup = &soc->groups[i];
 		pctrl->gpio_regs[i].ctl_reg =
 				msm_readl_ctl(pctrl, pgroup);
@@ -1899,6 +1929,9 @@ static int msm_pinctrl_hibernation_suspend(void)
 	}
 
 	for ( ; i < soc->ngroups; i++) {
+		if (!test_bit(i, chip->valid_mask))
+			continue;
+
 		pgroup = &soc->groups[i];
 		if (pgroup->ctl_reg)
 			pctrl->gpio_regs[i].ctl_reg =
@@ -1916,6 +1949,7 @@ static void msm_pinctrl_hibernation_resume(void)
 	const struct msm_pingroup *pgroup;
 	struct msm_pinctrl *pctrl = msm_pinctrl_data;
 	const struct msm_pinctrl_soc_data *soc = pctrl->soc;
+	struct gpio_chip *chip = &pctrl->chip;
 	void __iomem *tile_addr = NULL;
 
 	if (likely(!pctrl->hibernation) || !pctrl->gpio_regs || !pctrl->msm_tile_regs)
@@ -1934,6 +1968,9 @@ static void msm_pinctrl_hibernation_resume(void)
 
     /* Restore normal gpios */
 	for (i = 0; i < soc->ngpios; i++) {
+		if (!test_bit(i, chip->valid_mask))
+			continue;
+
 		pgroup = &soc->groups[i];
 		msm_writel_ctl(pctrl->gpio_regs[i].ctl_reg, pctrl, pgroup);
 		msm_writel_io(pctrl->gpio_regs[i].io_reg, pctrl, pgroup);
@@ -1946,6 +1983,9 @@ static void msm_pinctrl_hibernation_resume(void)
 	}
 
 	for ( ; i < soc->ngroups; i++) {
+		if (!test_bit(i, chip->valid_mask))
+			continue;
+
 		pgroup = &soc->groups[i];
 		if (pgroup->ctl_reg)
 			msm_writel_ctl(pctrl->gpio_regs[i].ctl_reg,

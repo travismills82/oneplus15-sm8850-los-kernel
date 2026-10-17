@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2013-2020, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023, 2025 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  */
 
 #ifndef _LINUX_MEM_SHARE_H
@@ -18,9 +18,6 @@
 #define CHECK	0
 #define FREE	1
 #define MEMSHARE_GUARD_BYTES	(4*1024)
-//#ifdef OPLUS_FEATURE_MDLOG_BUFFERSIZE
-#define MDLOG_BUFFER_CLIENT	1
-//#endif
 
 struct memshare_hyp_mapping {
 	u32 num_vmids;
@@ -66,6 +63,10 @@ struct mem_blocks {
 	uint8_t free_memory;
 	/* Need Hypervisor mapping*/
 	uint8_t hyp_mapping;
+	/* To collect ramdump during SSR*/
+	bool ssr_ramdump;
+	/* Name associated with client*/
+	struct device *subdev;
 };
 
 int memshare_alloc(struct device *dev,

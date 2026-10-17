@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2019-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2025, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  */
 #include "hab.h"
 #include "hab_qvm.h"
+#include "hab_virq_qvm.h"
 
 #include <linux/highmem.h>
 #include <linux/string.h>
 #include <linux/interrupt.h>
 #include <linux/io.h>
-
 #include <linux/of.h>
 #include <linux/of_platform.h>
 #include <linux/platform_device.h>
@@ -38,15 +38,23 @@ struct hab_driver_ops shmem_ops = {
 	.hab_pipe_read_dump = shmem_hab_pipe_read_dump,
 	.hab_stat_log = shmem_hab_stat_log,
 	.hab_hypervisor_unregister = shmem_hab_hypervisor_unregister,
+	.habhyp_virq_tx_register = qvm_virq_tx_register,
+	.habhyp_virq_rx_register = qvm_virq_rx_register,
+	.habhyp_virq_send = qvm_virq_send,
+	.habhyp_virq_tx_unregister = qvm_virq_tx_unregister,
+	.habhyp_virq_rx_unregister = qvm_virq_rx_unregister,
+	.habhyp_get_virq_num_id = qvm_get_virq_num_id,
+	.habhyp_init_virt_irq = qvm_init_virt_irq,
+	.timer_get_sclk_ticks = __arch_counter_get_cntvct,
 };
 
 
 /* this happens before hypervisor register */
 static int hab_shmem_probe(struct platform_device *pdev)
 {
-	int irq = 0;
+	int irq;
 	struct resource *mem;
-	void __iomem *shmem_base = NULL;
+	void __iomem *shmem_base;
 	static int pchan_cnt;
 	int ret = 0;
 
@@ -164,9 +172,10 @@ static irqreturn_t shm_irq_handler(int irq, void *_pchan)
 	if (dev && dev->guest_ctrl) {
 		int status = dev->guest_ctrl->status;
 
-		if (status & 0xffff) {/*source bitmask indicator*/
+		if (((unsigned int)status & 0xffffU) != 0U) {/*source bitmask indicator*/
 			rc = IRQ_HANDLED;
-			tasklet_hi_schedule(&dev->os_data->task);
+			if (dev->os_data)
+				tasklet_hi_schedule(&dev->os_data->task);
 		}
 	}
 	return rc;
@@ -197,9 +206,10 @@ int shmem_habhyp_commdev_create_dispatcher(struct physical_channel *pchan)
 	pr_debug("request_irq: irq = %d, pchan name = %s\n",
 			dev->irq, pchan->name);
 	ret = request_irq(dev->irq, shm_irq_handler, IRQF_SHARED, pchan->name, pchan);
-	if (ret)
+	if (ret) {
 		pr_err("request_irq for %s failed: %d\n",
 			pchan->name, ret);
+	}
 
 	return ret;
 }

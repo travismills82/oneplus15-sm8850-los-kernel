@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2022-2023, 2025, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  */
 
 #define pr_fmt(fmt)	"%s: " fmt, __func__
@@ -15,6 +15,7 @@
 #include <linux/syscore_ops.h>
 #include <linux/regmap.h>
 #include <linux/of.h>
+#include <linux/firmware/qcom/qcom_scm.h>
 
 #define QTI_PMIC_LPM_DEV_NAME	"qti,pmic-lpm"
 
@@ -36,7 +37,16 @@
 #define SDAM_HANDSHAKE_REG	0x48
 #define SDAM_TWM_HANDSHAKE_BIT	BIT(1)
 
+#define PMW6100_GPIO_INT_OWNER_CO_PROC	0x0E
+#define PMW6100_GPIO_INT_OWNER_APPS	0x0F
+
 static void qti_pmic_lpm_syscore_shutdown(void);
+
+enum ambient_status {
+	AMBIENT_EXIT = 0,
+	AMBIENT_ENTER,
+	AMBIENT_INPROGRESS,
+};
 
 /**
  * struct qti_pmic_lpm - Structure for QTI pmic lpm device
@@ -45,6 +55,7 @@ static void qti_pmic_lpm_syscore_shutdown(void);
  * @twm_class:			Pointer to twm_class class
  * @sdam_base:			Base address of the pmic sdam
  * @twm_enable:			Flag to indicate TWM is enabled
+ * @ambient_enable:		Flag to indicate Ambient mode is enabled
  */
 struct qti_pmic_lpm {
 	struct device		*dev;
@@ -54,6 +65,7 @@ struct qti_pmic_lpm {
 	bool			twm_enable;
 	bool			twm_exit;
 	bool			ds_exit;
+	enum ambient_status	ambient_enable;
 };
 
 static struct qti_pmic_lpm *gchip;
@@ -200,9 +212,60 @@ static ssize_t pmic_ds_exit_show(const struct class *c,
 	return scnprintf(buf, PAGE_SIZE, "%x\n", chip->ds_exit);
 }
 
+static ssize_t pmic_ambient_enable_store(const struct class *c,
+			const struct class_attribute *attr,
+			const char *buf, size_t count)
+{
+	struct qti_pmic_lpm *chip = container_of(c, struct qti_pmic_lpm,
+						twm_class);
+	bool val;
+	ssize_t rc;
+	int ret = 0;
+
+	rc = kstrtobool(buf, &val);
+	if (rc < 0)
+		return rc;
+
+	chip->ambient_enable = AMBIENT_INPROGRESS;
+
+	if (val) {
+		ret = qcom_scm_spmi_permission_switch(PMW6100_GPIO_INT_OWNER_CO_PROC);
+		if (!ret) {
+			pr_debug("successfully transfer the ownership to co-proc\n");
+			chip->ambient_enable = AMBIENT_ENTER;
+		} else {
+			pr_debug("failed transfer the ownership to co-proc\n");
+			chip->ambient_enable = AMBIENT_EXIT;
+			return -EINVAL;
+		}
+	} else {
+		ret = qcom_scm_spmi_permission_switch(PMW6100_GPIO_INT_OWNER_APPS);
+		if (!ret) {
+			pr_debug("successfully transfer the ownership to APPS\n");
+			chip->ambient_enable = AMBIENT_EXIT;
+		} else {
+			pr_debug("failed transfer the ownership to APPS\n");
+			chip->ambient_enable = AMBIENT_ENTER;
+			return -EINVAL;
+		}
+	}
+
+	return count;
+}
+
+static ssize_t pmic_ambient_enable_show(const struct class *c,
+			const struct class_attribute *attr, char *buf)
+{
+	struct qti_pmic_lpm *chip = container_of(c, struct qti_pmic_lpm,
+						twm_class);
+
+	return scnprintf(buf, PAGE_SIZE, "%d\n", chip->ambient_enable);
+}
+
 static CLASS_ATTR_RW(pmic_twm_enable);
 static CLASS_ATTR_RO(pmic_twm_exit);
 static CLASS_ATTR_RO(pmic_ds_exit);
+static CLASS_ATTR_RW(pmic_ambient_enable);
 
 static struct attribute *twm_attrs[] = {
 	&class_attr_pmic_twm_enable.attr,
@@ -211,6 +274,15 @@ static struct attribute *twm_attrs[] = {
 	NULL,
 };
 ATTRIBUTE_GROUPS(twm);
+
+static struct attribute *twm_ambient_attrs[] = {
+	&class_attr_pmic_twm_enable.attr,
+	&class_attr_pmic_twm_exit.attr,
+	&class_attr_pmic_ds_exit.attr,
+	&class_attr_pmic_ambient_enable.attr,
+	NULL,
+};
+ATTRIBUTE_GROUPS(twm_ambient);
 
 static struct syscore_ops qti_pmic_lpm_syscore_ops = {
 	.shutdown = qti_pmic_lpm_syscore_shutdown,
@@ -295,7 +367,8 @@ static int qti_pmic_lpm_probe(struct platform_device *pdev)
 	dev_set_drvdata(&pdev->dev, chip);
 
 	chip->twm_class.name = "pmic-lpm";
-	chip->twm_class.class_groups = twm_groups;
+	chip->twm_class.class_groups = (const struct attribute_group **)
+		of_device_get_match_data(&pdev->dev);
 
 	rc = class_register(&chip->twm_class);
 	if (rc < 0) {
@@ -426,7 +499,8 @@ static const struct dev_pm_ops qti_pmic_lpm_pm_ops = {
 };
 
 static const struct of_device_id qti_pmic_lpm_match_table[] = {
-	{ .compatible = QTI_PMIC_LPM_DEV_NAME },
+	{ .compatible = QTI_PMIC_LPM_DEV_NAME, .data = &twm_groups },
+	{ .compatible = "qti,pmw6100-pmic-lpm", .data = &twm_ambient_groups},
 	{}
 };
 

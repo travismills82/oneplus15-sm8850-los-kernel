@@ -77,10 +77,11 @@ static int glink_probe_smem_reg(struct edge_info *einfo)
 	if (IS_ERR_OR_NULL(einfo->glink)) {
 		GLINK_ERR(dev, "register failed for %s\n", einfo->glink_label);
 		einfo->glink = NULL;
-	}
-	GLINK_INFO("register successful for %s\n", einfo->glink_label);
+	} else {
+		GLINK_INFO("register successful for %s\n", einfo->glink_label);
 
-	qcom_glink_smem_start(einfo->glink);
+		qcom_glink_smem_start(einfo->glink);
+	}
 
 	return 0;
 }

@@ -26,6 +26,7 @@ enum hab_payload_type {
 	HAB_PAYLOAD_TYPE_IMPORT_ACK,
 	HAB_PAYLOAD_TYPE_IMPORT_ACK_FAIL,
 	HAB_PAYLOAD_TYPE_UNIMPORT,
+	HAB_PAYLOAD_TYPE_IMPORT_LOOPBACK_ACK,
 	HAB_PAYLOAD_TYPE_MAX,
 };
 #define LOOPBACK_DOM 0xFF
@@ -66,13 +67,21 @@ enum hab_payload_type {
 #define DEVICE_XVM3_NAME "hab_xvm3"
 #define DEVICE_VNW1_NAME "hab_vnw1"
 #define DEVICE_EXT1_NAME "hab_ext1"
+#define DEVICE_EXT2_NAME "hab_ext2"
+#define DEVICE_EXT3_NAME "hab_ext3"
 #define DEVICE_GPCE1_NAME "hab_gpce1"
+#define DEVICE_SOCCP1_NAME "hab_soccp1"
+#define DEVICE_DPRX1_NAME "hab_dprx1"
+#define DEVICE_DPRX2_NAME "hab_dprx2"
+#define DEVICE_EVA1_NAME "hab_eva1"
 
 #define HABCFG_MMID_NUM        26
 #define HAB_MMID_ALL_AREA      0
 
 /* make sure concascaded name is less than this value */
 #define MAX_VMID_NAME_SIZE 30
+#define HAB_VMNAME_SIZE    12
+#define HAB_VIRTIRQ_NAME_SIZE 20
 
 /*
  * The maximum value of payload_count in struct export_desc
@@ -111,6 +120,8 @@ enum hab_payload_type {
 	((_local_cfg_)->vmid_mmid_list[_vmid_].is_listener[_mmid_])
 #define HABCFG_GET_KERNEL(_local_cfg_, _vmid_, _mmid_) \
 	((_local_cfg_)->vmid_mmid_list[_vmid_].kernel_only[_mmid_])
+#define HABCFG_GET_DMA_COHERENT(_local_cfg_, _vmid_, _mmid_grp_index_) \
+	((_local_cfg_)->vmid_mmid_list[_vmid_].dma_coherent[_mmid_grp_index_])
 
 struct hab_header {
 	uint32_t id_type;
@@ -130,6 +141,8 @@ struct hab_header {
  * 500KB is big enough for now and leave a margin for other usage
  */
 #define HAB_HEADER_SIZE_MAX  0x0007D000
+/* chunk size for draining a channel in hab_msg_drop() */
+#define HAB_DROP_CHUNK_SIZE  256
 #define HAB_HEADER_TYPE_MASK 0x000F0000
 /* TYPE_LEN is the number of 1 bit in TYPE_MASK */
 #define HAB_HEADER_TYPE_LEN 4
@@ -194,6 +207,22 @@ struct hab_header {
 /* 1 - enhanced memory sharing protocol with sync import and async unimport */
 #define HAB_VER_PROT 1
 
+/*
+ * default up limit of maximum bytes of messages hold by HAB driver
+ * in physical channel that not picked by HAB clients，100MB.
+ * It is used to prevent from OOM where no / slow receiving in local but keep
+ * sending on remote.
+ */
+#define DEFAULT_PCHAN_RX_PENDING_SZ_MAX (100 * 1024 * 1024)
+
+/*
+ * default up limit of maximum number of messages hold by HAB driver
+ * in virtual channel that not picked by HAB clients，500.
+ * It is used to detect unhealthy HAB client's communication where no / slow
+ * receiving in local but keep sending on remote.
+ */
+#define DEFAULT_VCHAN_RX_PENDING_CNT_MAX (500)
+
 struct physical_channel {
 	struct list_head node;
 	char name[MAX_VMID_NAME_SIZE];
@@ -210,8 +239,8 @@ struct physical_channel {
 	int dom_id; /* BE role: remote vmid; FE role: don't care */
 	int vmid_local; /* from DT or hab_config */
 	int vmid_remote;
-	char vmname_local[12]; /* from DT */
-	char vmname_remote[12];
+	char vmname_local[HAB_VMNAME_SIZE]; /* from DT */
+	char vmname_remote[HAB_VMNAME_SIZE];
 	int closed;
 
 	spinlock_t rxbuf_lock;
@@ -226,6 +255,14 @@ struct physical_channel {
 	int vcnt;
 	rwlock_t vchans_lock;
 	int kernel_only;
+
+	/* accounting */
+	struct work_struct oom_work;
+	int rx_pending_sz_max;
+	int rx_pending_sz_peak;
+	atomic_t rx_pending_sz;
+	atomic_t rx_pending_cnt;
+
 	uint32_t mem_proto;
 };
 /* this payload has to be used together with type */
@@ -313,7 +350,7 @@ struct hvirq_dbl {
 	int virq_registered;
 	int virtirq_label;
 	int virtirq_num;
-
+	char virtirq_name[HAB_VIRTIRQ_NAME_SIZE];
 	/* QVM specific fields*/
 	int32_t irq;
 	void __iomem *base;
@@ -382,9 +419,12 @@ struct uhab_context {
 	int kernel;
 	int owner;
 	/*
-	 * only used for user-space hab client
+	 * For user-space hab client
 	 * if created through /dev/hab-* node, mmid_grp_index = MMID / 100
 	 * if created through /dev/hab node, mmid_grp_index = 0
+	 *
+	 * For kernel hab client
+	 * mmid_grp_index is always 0 as only one single kctx is shared with clients in kernel
 	 */
 	int mmid_grp_index;
 
@@ -400,6 +440,7 @@ struct vmid_mmid_desc {
 	int mmid[HABCFG_MMID_AREA_MAX+1]; /* selected or not */
 	int is_listener[HABCFG_MMID_AREA_MAX+1]; /* yes or no */
 	int kernel_only[HABCFG_MMID_AREA_MAX+1]; /* yes or no */
+	bool dma_coherent[HABCFG_MMID_AREA_MAX+1];
 };
 
 struct local_vmid {
@@ -431,6 +472,8 @@ struct hab_driver_ops {
 	int (*habhyp_virq_tx_unregister)(struct hvirq_dbl *dbl);
 	int (*habhyp_virq_rx_unregister)(struct hvirq_dbl *dbl);
 	int (*habhyp_get_virq_num_id)(void **virqdev, int label);
+	int (*habhyp_init_virt_irq)(void);
+	unsigned long long (*timer_get_sclk_ticks)(void);
 };
 
 struct hab_driver {
@@ -459,6 +502,10 @@ struct hab_driver {
 	struct list_head reclaim_list;
 	spinlock_t reclaim_lock;
 	struct work_struct reclaim_work;
+
+	/* accounting up limit, can be customized in DT */
+	int pchan_rx_pending_sz_max; /* default: DEFAULT_PCHAN_RX_PENDING_SZ_MAX */
+	int vchan_rx_pending_cnt_max; /* default: DEFAULT_VCHAN_RX_PENDING_CNT_MAX */
 
 	struct local_vmid settings; /* parser results */
 
@@ -503,6 +550,9 @@ struct virtual_channel {
 	/* stats */
 	atomic64_t tx_cnt; /* total succeeded tx */
 	atomic64_t rx_cnt; /* total succeeded rx */
+	int rx_pending_cnt; /* number of messages not received by client */
+	int rx_pending_cnt_peak; /* peak number of messages not received by client */
+	int rx_pending_sz; /* total size of messages not received by client */
 	int rx_inflight; /* rx in progress/blocking */
 };
 
@@ -583,6 +633,7 @@ struct export_desc_super {
 	void *platform_data;
 	unsigned long offset;
 	unsigned int payload_size; /* size of the compressed pfn structure */
+	bool is_loopback;
 
 	enum exp_desc_state import_state;
 	enum export_state exp_state;
@@ -659,6 +710,7 @@ int habmem_hyp_grant(struct virtual_channel *vchan,
 		int *compressed_size,
 		int *export_id);
 
+void habmem_defer_unimp_sent(struct export_desc *export);
 int habmem_hyp_revoke(void *expdata, uint32_t count);
 int habmem_exp_release(struct export_desc_super *exp_super);
 
@@ -668,7 +720,7 @@ void habmem_imp_hyp_close(void *priv, int kernel);
 int habmem_imp_hyp_map(void *imp_ctx, struct hab_import *param,
 		struct export_desc *exp, int kernel);
 
-int habmm_imp_hyp_unmap(void *imp_ctx, struct export_desc *exp, int kernel);
+int habmm_imp_hyp_unmap(void *imp_ctx, struct export_desc *exp, long fcnt_idle);
 
 int habmem_imp_hyp_mmap(struct file *flip, struct vm_area_struct *vma);
 
@@ -725,13 +777,13 @@ void hab_ctx_free_os(struct kref *ref);
 
 static inline void hab_ctx_get(struct uhab_context *ctx)
 {
-	if (ctx)
+	if (ctx != NULL)
 		kref_get(&ctx->refcount);
 }
 
 static inline void hab_ctx_put(struct uhab_context *ctx)
 {
-	if (ctx)
+	if (ctx != NULL)
 		kref_put(&ctx->refcount, hab_ctx_free);
 }
 
@@ -794,6 +846,11 @@ static inline int hab_stat_log(struct physical_channel **pchans, int pchan_cnt, 
 	return hab_driver.ops->hab_stat_log(pchans, pchan_cnt, dest, dest_size);
 }
 
+static inline int habhyp_init_virt_irq(void)
+{
+	return hab_driver.ops->habhyp_init_virt_irq();
+}
+
 static inline int habhyp_virq_tx_register(struct hvirq_dbl *dbl, int dbl_label)
 {
 	return hab_driver.ops->habhyp_virq_tx_register(dbl, dbl_label);
@@ -827,6 +884,11 @@ static inline int habhyp_get_virq_num_id(void **virqdev, int label)
 static inline void hab_hypervisor_unregister(void)
 {
 	hab_driver.ops->hab_hypervisor_unregister();
+}
+
+static inline unsigned long long msm_timer_get_sclk_ticks(void)
+{
+	return hab_driver.ops->timer_get_sclk_ticks();
 }
 
 int hab_hypervisor_register_os(void);
@@ -874,6 +936,7 @@ int hab_stat_show_ctx(struct hab_driver *drv, char *buf, int sz);
 int hab_stat_show_expimp(struct hab_driver *drv, int pid, char *buf, int sz);
 int hab_stat_show_reclaim(struct hab_driver *drv, char *buf, int sz);
 int hab_stat_show_virq(struct hab_driver *drv, char *buf, int sz);
+int hab_stat_store_rx_pending(const char *buf, int size);
 int hab_stat_init_sub(struct hab_driver *drv);
 int hab_stat_deinit_sub(struct hab_driver *drv);
 
@@ -908,7 +971,6 @@ static inline void hab_write_unlock(rwlock_t *lock, int no_touch_bh)
 	else
 		write_unlock_bh(lock);
 }
-
 
 
 int dump_hab_get_file_name(char *file_time, int ft_size);

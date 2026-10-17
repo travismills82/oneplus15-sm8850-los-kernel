@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2023-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  */
 
 #include <linux/kobject.h>
@@ -162,7 +162,7 @@ static size_t async_release_provider(struct si_object_invoke_ctx *oic,
 	/* INITIALIZE the header and message. */
 
 	if (i) {
-		async_msg->header.version = 0x00010002U;
+		async_msg->header.version = SMCINVOKE_MIN_ASYNC_VERSION;
 		async_msg->header.op = ASYNC_OP_RELEASE;
 		async_msg->op_release.count = i;
 	}
@@ -288,7 +288,9 @@ static void call_prepare(struct si_object_invoke_ctx *oic,
 				}
 
 				async_msg->info.count = 1;
-				async_msg->header.version = 0x00010002U;
+				async_msg->header.version = SMCINVOKE_ASYNC_VERSION_SHM;
+				if (op == OBJECT_OP_AUTO_MAP_FFA)
+					async_msg->header.version = SMCINVOKE_ASYNC_VERSION_FFA;
 				async_msg->header.op = op;
 
 				/* Move forward. */

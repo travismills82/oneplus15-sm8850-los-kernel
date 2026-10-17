@@ -25,6 +25,7 @@
 #include <linux/dma-mapping.h>
 #include <linux/dma-map-ops.h>
 #include <linux/platform_device.h>
+#include <linux/of_platform.h>
 #include <linux/usb/audio-v3.h>
 #include <linux/ipc_logging.h>
 
@@ -35,6 +36,7 @@
 #include "sound/usb/pcm.h"
 #include "sound/usb/power.h"
 #include "usb_audio_qmi_v01.h"
+#include <linux/usb/dwc3-msm.h>
 
 #define BUS_INTERVAL_FULL_SPEED 1000 /* in us */
 #define BUS_INTERVAL_HIGHSPEED_AND_ABOVE 125 /* in us */
@@ -57,6 +59,7 @@
 #define IOVA_XFER_BUF_MAX (0xfffff000 - PAGE_SIZE)
 
 #define MAX_XFER_BUFF_LEN (24 * PAGE_SIZE)
+#define EP_MASK 0x7F
 
 struct xhci_ring;
 
@@ -126,6 +129,7 @@ struct uaudio_qmi_dev {
 	unsigned long card_slot;
 	/* indicate event ring mapped or not */
 	bool er_mapped;
+	struct qsram_xhci __iomem *qsram;
 };
 
 static struct uaudio_qmi_dev *uaudio_qdev;
@@ -135,6 +139,7 @@ struct uaudio_qmi_svc {
 	struct sockaddr_qrtr client_sq;
 	bool client_connected;
 	void *uaudio_ipc_log;
+	struct qsram_xhci __iomem *qsram;
 };
 
 static struct uaudio_qmi_svc *uaudio_svc;
@@ -491,8 +496,9 @@ static void *find_csint_desc(unsigned char *descstart, int desclen, u8 dsubtype)
 	return NULL;
 }
 
+
 static int initialize_uadev_if_in_use(int card_num,
-	struct snd_usb_substream *subs, struct snd_usb_audio *chip);
+		struct snd_usb_substream *subs, struct snd_usb_audio *chip);
 /**
  * uaudio_populate_uac_desc() - parse UAC parameters and populate QMI resp
  * @subs: usb substream
@@ -527,7 +533,6 @@ static int uaudio_populate_uac_desc(struct snd_usb_substream *subs,
 
 	assoc = iface->intf_assoc;
 	card_num = pcm_card_num;
-
 	alts = &iface->altsetting[subs->cur_audiofmt->altset_idx];
 	altsd = get_iface_desc(alts);
 	protocol = altsd->bInterfaceProtocol;
@@ -628,6 +633,7 @@ static int uaudio_populate_uac_desc(struct snd_usb_substream *subs,
 
 	memcpy(&resp->std_as_opr_intf_desc, &alts->desc, sizeof(alts->desc));
 	resp->std_as_opr_intf_desc_valid = 1;
+
 	return 0;
 }
 
@@ -858,6 +864,11 @@ skip_sync:
 
 	chip = uadev[card_num].chip;
 
+	if (!chip) {
+		ret = -ENODEV;
+		goto unmap_sync;
+	}
+
 	if (atomic_read(&uadev[card_num].in_use) == 1) {
 		ret = initialize_uadev_if_in_use(card_num, subs, chip);
 		if (ret < 0)
@@ -912,18 +923,18 @@ err:
 	return ret;
 }
 
+
 static int initialize_uadev_if_in_use(int card_num,
-	struct snd_usb_substream *subs, struct snd_usb_audio *chip)
+		struct snd_usb_substream *subs, struct snd_usb_audio *chip)
 {
 	uaudio_dbg("Device in use: card_num=%d, num_intf=%d",
 		card_num, subs->dev->config->desc.bNumInterfaces);
-
 	if (!uadev[card_num].disconnect_wq_init) {
 		init_waitqueue_head(&uadev[card_num].disconnect_wq);
 		uadev[card_num].disconnect_wq_init = true;
 	}
-
-	uadev[card_num].num_intf = subs->dev->config->desc.bNumInterfaces;
+	uadev[card_num].num_intf =
+		subs->dev->config->desc.bNumInterfaces;
 	uadev[card_num].info = kcalloc(uadev[card_num].num_intf,
 		sizeof(struct intf_info), GFP_KERNEL);
 	if (!uadev[card_num].info)
@@ -965,9 +976,6 @@ static void uaudio_dev_intf_cleanup(struct usb_device *udev,
 	info->xfer_buf_pa = 0;
 
 	info->in_use = false;
-
-	uaudio_dbg("release resources: intf# %d card# %d\n",
-			info->intf_num, info->pcm_card_num);
 }
 
 static void uaudio_event_ring_cleanup_free(struct uaudio_dev *dev)
@@ -996,6 +1004,8 @@ static void uaudio_dev_cleanup(struct uaudio_dev *dev)
 		if (!dev->info[if_idx].in_use)
 			continue;
 		uaudio_dev_intf_cleanup(dev->udev, &dev->info[if_idx]);
+		uaudio_dbg("release resources: intf# %d card# %d\n",
+				dev->info[if_idx].intf_num, dev->card_num);
 	}
 
 	dev->num_intf = 0;
@@ -1460,6 +1470,7 @@ static int check_valid_request(struct qmi_uaudio_stream_req_msg_v01 *req_msg,
 
 	if (!subs) {
 		uaudio_err("invalid substream\n");
+		return -EFAULT;
 	}
 
 	chip = uadev[pcm_card_num].chip;
@@ -1485,7 +1496,7 @@ static int check_valid_request(struct qmi_uaudio_stream_req_msg_v01 *req_msg,
 
 	if (req_msg->enable && (*info_idx < 0)) {
 		uaudio_err("interface# %d already in use card# %d\n",
-				subs->cur_audiofmt->iface, pcm_card_num);
+			subs->cur_audiofmt ? subs->cur_audiofmt->iface : -1, pcm_card_num);
 		return -EBUSY;
 	}
 
@@ -1529,7 +1540,16 @@ static void handle_uaudio_stream_req(struct qmi_handle *handle,
 	pcm_card_num = (req_msg->usb_token & SND_PCM_CARD_NUM_MASK) >> 16;
 
 	subs = find_substream(pcm_card_num, pcm_dev_num, direction);
+	if (!subs) {
+		uaudio_err("invalid substream\n");
+		goto response;
+	}
+
 	chip = uadev[pcm_card_num].chip;
+	if (!chip) {
+		uaudio_err("invalid chip\n");
+		goto response;
+	}
 
 	ret = check_valid_request(req_msg, &info_idx);
 	if (ret)
@@ -1606,15 +1626,13 @@ static void handle_uaudio_stream_req(struct qmi_handle *handle,
 response:
 	if (!req_msg->enable && ret != -EINVAL && ret != -ENODEV) {
 		mutex_lock(&chip->mutex);
-		if (info_idx >= 0) {
+		if (info_idx >= 0 && uadev[pcm_card_num].info) {
 			info = &uadev[pcm_card_num].info[info_idx];
-			if (info) {
-				uaudio_dev_intf_cleanup(
-						uadev[pcm_card_num].udev,
-						info);
-				uaudio_dbg("release resources: intf# %d card# %d\n",
-						info->intf_num, pcm_card_num);
-			}
+			uaudio_dev_intf_cleanup(
+					uadev[pcm_card_num].udev,
+					info);
+			uaudio_dbg("release resources: intf# %d card# %d\n",
+					info->intf_num, pcm_card_num);
 		}
 		if (atomic_dec_and_test(&uadev[pcm_card_num].in_use))
 			uaudio_dev_release(&uadev[pcm_card_num]);
@@ -1745,10 +1763,46 @@ static struct snd_usb_platform_ops offload_ops = {
 	.disconnect_cb = uaudio_disconnect,
 };
 
+static struct qsram_xhci __iomem *uaudio_get_qsram(struct device *dev)
+{
+	struct device_node *np;
+	struct platform_device *pdev;
+	struct qsram_xhci __iomem *qsram;
+
+	/* Find the dwc3-msm device node */
+	np = of_find_compatible_node(NULL, NULL, "qcom,dwc-usb3-msm");
+	if (!np) {
+		np = of_find_compatible_node(NULL, NULL, "qcom,dwc3-msm-fw-managed");
+		if (!np) {
+			dev_err(dev, "dwc3-msm device node not found\n");
+			return ERR_PTR(-ENODEV);
+		}
+	}
+
+	/* Get the platform device */
+	pdev = of_find_device_by_node(np);
+	of_node_put(np);
+	if (!pdev) {
+		dev_err(dev, "dwc3-msm platform device not found\n");
+		return ERR_PTR(-ENODEV);
+	}
+
+	qsram = dwc3_msm_get_qsram(&pdev->dev);
+	put_device(&pdev->dev);
+
+	if (!qsram) {
+		dev_err(dev, "dwc3-msm qsram not initialized\n");
+		return ERR_PTR(-EPROBE_DEFER);
+	}
+
+	return qsram;
+}
+
 static int uaudio_qmi_plat_probe(struct platform_device *pdev)
 {
 	int ret;
 	struct device_node *node = pdev->dev.of_node;
+	struct qsram_xhci __iomem *qsram;
 
 	if (!uaudio_svc) {
 		ret = uaudio_qmi_svc_init();
@@ -1762,6 +1816,19 @@ static int uaudio_qmi_plat_probe(struct platform_device *pdev)
 		return -ENOMEM;
 
 	uaudio_qdev->dev = &pdev->dev;
+	qsram = uaudio_get_qsram(&pdev->dev);
+
+	if (IS_ERR(qsram)) {
+		ret = PTR_ERR(qsram);
+		if (ret == -EPROBE_DEFER) {
+			dev_info(&pdev->dev, "Deferring probe, waiting for dwc3-msm\n");
+			return ret;  // Kernel will retry probe later
+		}
+		dev_err(&pdev->dev, "Failed to get qsram: %d\n", ret);
+		return ret;
+	}
+
+	uaudio_qdev->qsram = qsram;
 
 	ret = of_property_read_u32(node, "qcom,usb-audio-stream-id",
 				&uaudio_qdev->sid);

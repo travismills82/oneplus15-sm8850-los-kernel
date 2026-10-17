@@ -2,7 +2,7 @@
 /*
  * Copyright (c) 2015-2016, The Linux Foundation. All rights reserved.
  *
- * Copyright (c) 2023-2025 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  *
  * Description: CoreSight System Trace Macrocell driver
  *
@@ -1010,15 +1010,31 @@ static int stm_suspend(struct device *dev)
 	struct stm_device	*stm_dev;
 	struct list_head	*head, *p;
 
-	if (pm_suspend_via_firmware()) {
-		coresight_disable_sysfs(drvdata->csdev);
-
+	if (pm_suspend_target_state == PM_SUSPEND_MEM) {
+		/*
+		 * Release the references the stm_source links hold on the STM
+		 * class device first. Use the synchronous put so the class
+		 * device's usage_count (and therefore the parent's child_count)
+		 * is decremented immediately, otherwise the autosuspend delay
+		 * would leave the parent's child_count elevated and block its
+		 * runtime suspend during the upcoming system sleep.
+		 */
 		stm_dev = drvdata->stm.stm;
 		if (stm_dev) {
 			head = &stm_dev->link_list;
 			list_for_each(p, head)
-				pm_runtime_put_autosuspend(&stm_dev->dev);
+				pm_runtime_put_sync(&stm_dev->dev);
 		}
+
+		/*
+		 * STM is a software source and can be held by more than one
+		 * user (e.g. an stm_source link AND a sysfs enable_source), so
+		 * csdev->refcnt may be > 1. Drain every reference so the trace
+		 * path is actually released and all devices on it drop their
+		 * runtime references.
+		 */
+		while (coresight_get_mode(drvdata->csdev) == CS_MODE_SYSFS)
+			coresight_disable_sysfs(drvdata->csdev);
 	}
 
 	return 0;
@@ -1030,7 +1046,7 @@ static int stm_resume(struct device *dev)
 	struct stm_device	*stm_dev;
 	struct list_head	*head, *p;
 
-	if (pm_suspend_via_firmware()) {
+	if (pm_suspend_target_state == PM_SUSPEND_MEM) {
 		stm_dev = drvdata->stm.stm;
 		if (stm_dev) {
 			head = &stm_dev->link_list;
@@ -1050,14 +1066,16 @@ static int stm_freeze(struct device *dev)
 	struct stm_device	*stm_dev;
 	struct list_head	*head, *p;
 
-	coresight_disable_sysfs(drvdata->csdev);
-
+	/* Drop the stm_source link references synchronously - see stm_suspend(). */
 	stm_dev = drvdata->stm.stm;
 	if (stm_dev) {
 		head = &stm_dev->link_list;
 		list_for_each(p, head)
-			pm_runtime_put_autosuspend(&stm_dev->dev);
+			pm_runtime_put_sync(&stm_dev->dev);
 	}
+
+	while (coresight_get_mode(drvdata->csdev) == CS_MODE_SYSFS)
+		coresight_disable_sysfs(drvdata->csdev);
 
 	return 0;
 }

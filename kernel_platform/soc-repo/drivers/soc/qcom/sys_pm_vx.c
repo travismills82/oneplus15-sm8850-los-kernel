@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2020-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2025, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  *
  */
 #define pr_fmt(fmt) "%s: " fmt, __func__
@@ -163,6 +163,50 @@ static const char * const drv_names_alor[][MAX_DRV_NAMES] = {
 			"SOCCP", "DDR AUX", "ARC CPRF", ""},
 	[AOSS_DRV_NAME] = {"APPS", "WPSS", "AUDIO", "AOP", "DEBUG", "GPU", "DISPLAY", "COMPUTE",
 			"TME", "MODEM", "WLAN RF", "WLAN BB", "CAM", "PCIE", "MM", "SOCCP", ""},
+};
+
+static const char * const drv_names_x1e80100[][MAX_DRV_NAMES] = {
+	[CXPC_DRV_NAME] = {"TZ", "L3", "HLOS", "HYP", "SECPROC", "AUDIO", "AOP", "DEBUG",
+			"GPU", "DISPLAY", "COMPUTE_DSP", "TME_HW", "TME_SW", "MDM SW", "MDM HW",
+			"WLAN RF", "WLAN BB", "CAM_IFE0", "CAM_IFE1", "CAM_IFE2", "PCIE",
+			"DDR AUX", "ARC CPRF", ""},
+	[AOSS_DRV_NAME] = {"APPS", "SP", "AUDIO", "AOP", "DEBUG", "GPU", "DISPLAY", "COMPUTE",
+			"TME", "MODEM", "WLAN RF", "WLAN BB", "CAM", "PCIE", ""},
+};
+
+static const char * const drv_names_chora[][MAX_DRV_NAMES] = {
+	[CXPC_DRV_NAME] = {"TZ", "L3", "HLOS", "HYP", "AUDIO", "AOP", "DEBUG", "GPU",
+			"DISPLAY", "TME_HW", "TME_SW", "MDM SW", "MDM HW", "WLAN RF",
+			 "WPSS", "DDR AUX", "ARC CPRF", ""},
+	[AOSS_DRV_NAME] = {"APPS", "AUDIO", "AOP", "DEBUG", "GPU", "DISPLAY", "TME",
+			"MODEM", "WLAN RF", "WPSS", ""},
+};
+
+static const char * const drv_names_seraph[][MAX_DRV_NAMES] = {
+	[CXPC_DRV_NAME] = {"TZ", "L3", "HLOS", "HYP", "RESERVED", "AUDIO", "AOP", "DEBUG",
+			"GPU", "DISPLAY", "COMPUTE_DSP", "TME_HW", "TME_SW", "RESERVED",
+			"WLAN RF", "WLAN BB", "WPSS", "PCIE0 CESTA", "PCIE1 CESTA", "SOCCP",
+			"DDR AUX", "ARC CPRF", ""},
+	[AOSS_DRV_NAME] = {"APPS", "RESERVED", "AUDIO", "AOP", "DEBUG", "GPU", "DISPLAY", "COMPUTE",
+			"TME", "RESERVED", "WLAN RF", "WLAN BB", "PCIE", "SOCCP", ""},
+};
+
+static const char * const drv_names_pikachu[][MAX_DRV_NAMES] = {
+	[CXPC_DRV_NAME] = {"TZ", "L3", "HLOS", "HYP", "RESERVED", "AUDIO", "AUDIO CESTA", "SMC",
+			"AOP", "DEBUG", "GPU", "DISPLAY0", "COMPUTE_DSP", "TME_HW", "TME_SW",
+			"DISPLAY1", "WLAN RF", "WLAN BB", "WPSS", "PCIE0 CESTA", "PCIE1 CESTA",
+			"SOCCP", "DDR AUX", "ARC CPRF", ""},
+	[AOSS_DRV_NAME] = {"APPS", "RESERVED", "AUDIO", "SMC", "AOP", "DEBUG", "GPU", "DISPLAY",
+			"COMPUTE", "TME", "RESERVED", "WLAN RF", "WLAN BB", "PCIE", "SOCCP", ""},
+};
+
+static const char * const drv_names_bourtzi[][MAX_DRV_NAMES] = {
+	[CXPC_DRV_NAME] = {"TZ", "L3", "HLOS", "HYP", "AUDIO",
+			"AOP", "DEBUG", "DISPLAY", "TME_HW", "TME_SW",
+			"WPSS", "MDM SW", "MDM HW", "WLAN RF", "WLAN BB",
+			"DDR AUX", "ARC CPRF", ""},
+	[AOSS_DRV_NAME] = {"APPS", "AUDIO", "AOP", "DEBUG", "DISPLAY",
+			"TME", "WPSS", "MODEM", "WLAN RF", "WLAN BB", ""},
 };
 
 static ssize_t debug_time_ms_show(struct device *dev,
@@ -396,6 +440,8 @@ static void vx_check_drv(struct vx_platform_data *pd)
 {
 	struct vx_log log;
 	int i, j, ret;
+	const char **drvs;
+	size_t n_drv;
 
 	ret = read_vx_data(pd, &log);
 	if (ret) {
@@ -403,12 +449,18 @@ static void vx_check_drv(struct vx_platform_data *pd)
 		return;
 	}
 
-	for (i = 0; i < pd->n_cxpc_drv; i++) {
+	drvs = vx_get_drvs_info(log.header.mode.type, pd, &n_drv);
+	if (!drvs || !n_drv) {
+		pr_err("failed to obtain drv info\n");
+		return;
+	}
+
+	for (i = 0; i < n_drv; i++) {
 		for (j = 0; j < log.loglines; j++) {
 			if (log.data[j].drv_vx[i] == 0)
 				break;
 			if (j == log.loglines - 1) {
-				pr_warn("DRV: %s has blocked power collapse\n", pd->cxpc_drvs[i]);
+				pr_warn("DRV: %s has blocked power collapse\n", drvs[i]);
 				trigger_dump(pd);
 			}
 		}
@@ -575,6 +627,16 @@ static const struct of_device_id drv_match_table[] = {
 	  .data = drv_names_vienna },
 	{ .compatible = "qcom,sys-pm-alor",
 	  .data = drv_names_alor },
+	{ .compatible = "qcom,sys-pm-x1e80100",
+	  .data = drv_names_x1e80100 },
+	{ .compatible = "qcom,sys-pm-chora",
+	  .data = drv_names_chora },
+	{ .compatible = "qcom,sys-pm-seraph",
+	  .data = drv_names_seraph },
+	{ .compatible = "qcom,sys-pm-pikachu",
+	  .data = drv_names_pikachu },
+	  { .compatible = "qcom,sys-pm-bourtzi",
+	  .data = drv_names_bourtzi },
 	{ }
 };
 

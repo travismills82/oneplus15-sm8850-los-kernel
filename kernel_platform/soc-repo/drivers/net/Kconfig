@@ -15,6 +15,16 @@ config VIRTIO_NET
 	  QEMU-based virtual machine managers (e.g., KVM or Xen).
 	  Say Y or M.
 
+config VIRTIO_NET_DISABLE_F_DEVICE_STATS
+	bool "Disable/Enable F_DEVICE_STATS bit in Virtio network driver"
+	depends on VIRTIO_NET
+	help
+	  This config will disable or enable F_DEVICE_STATS bit in the
+	  VirtIO-based network driver. Disabling this bit can avoid
+	  crashes caused by QNX VirtIO-based network backend driver
+	  using F_DEVICE_STATS bit value for other function.
+	  Say Y or N.
+
 menuconfig NETDEVICES
 	default y if UML
 	depends on NET
@@ -39,5 +49,6 @@ if NETDEVICES
 source "$(KCONFIG_EXT_PREFIX)drivers/net/pcs/Kconfig"
 source "$(KCONFIG_EXT_PREFIX)drivers/net/ethernet/Kconfig"
 source "$(KCONFIG_EXT_PREFIX)drivers/net/phy/Kconfig"
+source "$(KCONFIG_EXT_PREFIX)drivers/net/mdio_fe/Kconfig"
 
 endif # NETDEVICES

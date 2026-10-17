@@ -1,3 +1,4 @@
+load(":soc_repo_path.bzl", "SOC_MODULES_REPO_PATH")
 def register_modules(registry):
     registry.register(
         name = "drivers/video/backlight/qcom-spmi-wled",
@@ -9,6 +10,6 @@ def register_modules(registry):
         ],
         deps = [
             # do not sort
-            "drivers/power/supply/qti_battery_charger",
+            "//{}/oplus/kernel/charger/bazel:{{target_variant}}_oplus_chg_v2".format(SOC_MODULES_REPO_PATH),
         ],
     )

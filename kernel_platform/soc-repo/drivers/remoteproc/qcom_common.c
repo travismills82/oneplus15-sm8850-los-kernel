@@ -179,14 +179,11 @@ static int qcom_add_minidump_segments(struct rproc *rproc, struct minidump_subsy
 	struct minidump_region __iomem *ptr;
 	struct minidump_region region;
 	int seg_cnt, i;
+	int ret = 0;
 	dma_addr_t da;
 	size_t size;
-	char *name;
-/*	char *name, *dbg_buf_name = "md_dbg_buf";
+	char *name, *dbg_buf_name = "md_dbg_buf";
 	int len = strlen(dbg_buf_name);
-			*/
-
-	dev_err(&rproc->dev, "qcom_add_minidump_segments: for %s, subsystem->region_count is %d\n", rproc->name,le32_to_cpu(subsystem->region_count));
 
 	if (WARN_ON(!list_empty(&rproc->dump_segments))) {
 		dev_err(&rproc->dev, "dump segment list already populated\n");
@@ -196,46 +193,39 @@ static int qcom_add_minidump_segments(struct rproc *rproc, struct minidump_subsy
 	seg_cnt = le32_to_cpu(subsystem->region_count);
 	ptr = ioremap((unsigned long)le64_to_cpu(subsystem->regions_baseptr),
 		      seg_cnt * sizeof(struct minidump_region));
-
-	dev_err(&rproc->dev, "dump_segments list inf 0x%lx\n", (unsigned long)ptr);
-
 	if (!ptr)
 		return -EFAULT;
 
 	for (i = 0; i < seg_cnt; i++) {
 		memcpy_fromio(&region, ptr + i, sizeof(region));
-
-		dev_err(&rproc->dev, "dump_segments list seg_cnt(%d)_(%d)\n", seg_cnt, i);
-		dev_err(&rproc->dev, "                                  region.name=%s, region.address(0x%llx), region.size(%d)\n", name, le64_to_cpu(region.address), le32_to_cpu(region.size));
-		dev_err(&rproc->dev, "                                  region.valid=0x%x(MINIDUMP_REGION_VALID=0x%x)\n", region.valid, MINIDUMP_REGION_VALID);
-
 		if (le32_to_cpu(region.valid) == MINIDUMP_REGION_VALID) {
 			name = kstrndup(region.name, MAX_REGION_NAME_LENGTH - 1, GFP_KERNEL);
 			if (!name) {
-				iounmap(ptr);
-				return -ENOMEM;
+				ret = -ENOMEM;
+				break;
 			}
 			da = le64_to_cpu(region.address);
 			size = le32_to_cpu(region.size);
-/*
 			if (le32_to_cpu(subsystem->encryption_status) != MINIDUMP_SS_ENCR_DONE) {
-
-				dev_err(&rproc->dev, "qcom_add_minidump_segments: for %s, (le32_to_cpu(subsystem->encryption_status) != MINIDUMP_SS_ENCR_DONE) break, seg_cnt(%d)_(%d)\n", rproc->name, seg_cnt, i);
-
 				if (!i && len < MAX_REGION_NAME_LENGTH &&
-				    !strcmp(name, dbg_buf_name))
-					rproc_coredump_add_custom_segment(rproc, da, size, dumpfn,
-									  name);
+				    !strcmp(name, dbg_buf_name)) {
+					ret = rproc_coredump_add_custom_segment(rproc, da, size,
+										dumpfn, name);
+					if (ret)
+						kfree(name);
+				}
 				break;
 			}
-			*/
-			dev_err(&rproc->dev, "qcom_add_minidump_segments: for %s, do rproc_coredump_add_custom_segment(%s), seg_cnt(%d)_(%d)\n", rproc->name, name, seg_cnt, i);
-			rproc_coredump_add_custom_segment(rproc, da, size, dumpfn, name);
+			ret = rproc_coredump_add_custom_segment(rproc, da, size, dumpfn, name);
+			if (ret) {
+				kfree(name);
+				break;
+			}
 		}
 	}
 
 	iounmap(ptr);
-	return 0;
+	return ret;
 }
 
 static void qcom_rproc_minidump(struct rproc *rproc, struct device *md_dev)
@@ -368,8 +358,8 @@ void qcom_minidump(struct rproc *rproc, struct device *md_dev, unsigned int mini
 	 //Add for customized subsystem ramdump to skip generate dump cause by SAU
 	 if (SKIP_GENERATE_RAMDUMP) {
 		dev_err(&rproc->dev, "Skip ramdump cuase by ap normal trigger.\n");
-	 	SKIP_GENERATE_RAMDUMP = false;
-	 	goto clean_minidump;;
+		SKIP_GENERATE_RAMDUMP = false;
+		goto clean_minidump;;
 	 }
 	#endif
 
@@ -990,6 +980,7 @@ void qcom_remove_pdm_subdev(struct rproc *rproc, struct qcom_rproc_pdm *pdm)
 }
 EXPORT_SYMBOL_GPL(qcom_remove_pdm_subdev);
 
+#ifdef CONFIG_ANDROID_VENDOR_HOOKS
 static void qcom_check_ssr_status(void *data, struct rproc *rproc)
 {
 	if (!atomic_read(&rproc->power) ||
@@ -1015,6 +1006,7 @@ static void rproc_recovery_notifier(void *data, struct rproc *rproc)
 	if (rproc_recovery_set_fn)
 		(rproc_recovery_set_fn)(rproc);
 }
+#endif
 
 int qcom_common_init(void)
 {
@@ -1039,6 +1031,7 @@ int qcom_common_init(void)
 		goto remove_shutdown_sysfs;
 	}
 
+#ifdef CONFIG_ANDROID_VENDOR_HOOKS
 	ret = register_trace_android_vh_rproc_recovery(qcom_check_ssr_status, NULL);
 	if (ret) {
 		pr_err("qcom rproc: failed to register trace hooks\n");
@@ -1050,13 +1043,16 @@ int qcom_common_init(void)
 		pr_err("qcom rproc: failed to register recovery_set vendor hook\n");
 		goto unregister_rproc_recovery_vh;
 	}
-
+#endif
 	return 0;
 
+#ifdef CONFIG_ANDROID_VENDOR_HOOKS
 unregister_rproc_recovery_vh:
 	unregister_trace_android_vh_rproc_recovery(qcom_check_ssr_status, NULL);
 remove_coredump_sysfs:
 	sysfs_remove_file(sysfs_kobject, &both_coredumps_attr.attr);
+#endif
+
 remove_shutdown_sysfs:
 	sysfs_remove_file(sysfs_kobject, &shutdown_requested_attr.attr);
 remove_kobject:
@@ -1071,7 +1067,9 @@ void qcom_common_exit(void)
 	sysfs_remove_file(sysfs_kobject, &both_coredumps_attr.attr);
 	sysfs_remove_file(sysfs_kobject, &shutdown_requested_attr.attr);
 	kobject_put(sysfs_kobject);
+#ifdef CONFIG_ANDROID_VENDOR_HOOKS
 	unregister_trace_android_vh_rproc_recovery(qcom_check_ssr_status, NULL);
+#endif
 }
 module_exit(qcom_common_exit);
 

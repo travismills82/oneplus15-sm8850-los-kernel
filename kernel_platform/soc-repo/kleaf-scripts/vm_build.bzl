@@ -4,7 +4,6 @@ load(
     "get_dtb_list",
     "get_dtbo_list",
 )
-load("//build/bazel_common_rules/dist:dist.bzl", "copy_to_dist_dir")
 load("//build/kernel/kleaf:hermetic_tools.bzl", "hermetic_genrule")
 load(
     "//build/kernel/kleaf:kernel.bzl",
@@ -15,9 +14,11 @@ load(
 load(":kleaf-scripts/dtbs.bzl", "define_qcom_dtbs")
 load(":kleaf-scripts/image_opts.bzl", "vm_image_opts")
 load(":qcom_modules.bzl", "registry")
+load("@rules_pkg//pkg:install.bzl", "pkg_install")
+load("@rules_pkg//pkg:mappings.bzl", "pkg_files", "strip_prefix")
 
 def define_make_vm_dtb_img(target, dtb_list, page_size):
-    compiled_dtbs = ["//soc-repo:{}_dtb_build/{}".format(target, t) for t in dtb_list]
+    compiled_dtbs = [":{}_dtb_build/{}".format(target, t) for t in dtb_list]
     dtb_cmd = "compiled_dtb_list=\"{}\"\n".format(" ".join(["$(location {})".format(d) for d in compiled_dtbs]))
     dtb_cmd += """
       set +x
@@ -34,14 +35,19 @@ def define_make_vm_dtb_img(target, dtb_list, page_size):
         cmd = dtb_cmd,
     )
 
-    copy_to_dist_dir(
-        name = "{}_vm_dist".format(target),
-        data = [
+    pkg_files(
+        name = "{}_vm_dist_files".format(target),
+        srcs = [
             "{}-dtb.img".format(target),
         ] + compiled_dtbs,
-        dist_dir = "out/msm-kernel-{}/dist".format(target),
-        flat = True,
-        log = "info",
+        visibility = ["//visibility:private"],
+        strip_prefix = strip_prefix.files_only(),
+    )
+
+    pkg_install(
+        name = "{}_vm_dist".format(target),
+        srcs = [":{}_vm_dist_files".format(target)],
+        destdir = "out/msm-kernel-{}/dist".format(target),
     )
 
 def define_single_vm_build(
@@ -65,7 +71,7 @@ def define_single_vm_build(
         define_qcom_dtbs(
             stem = name,
             target = dtb_target,
-            defconfig = "//soc-repo:arch/arm64/configs/generic_vm_defconfig",
+            defconfig = ":arch/arm64/configs/generic_vm_defconfig",
         )
 
     hermetic_genrule(
@@ -98,20 +104,25 @@ def define_single_vm_build(
         kernel_modules = [":{}/{}".format(name, module) for module in modules],
     )
 
-    copy_to_dist_dir(
-        name = "{}_host_dist".format(name),
-        data = [
+    pkg_files(
+        name = "{}_host_dist_files".format(name),
+        srcs = [
             ":gen-headers_install.sh",
             ":unifdef",
         ],
-        dist_dir = "out/msm-kernel-{}/host".format(name),
-        flat = True,
-        log = "info",
+        visibility = ["//visibility:private"],
+        strip_prefix = strip_prefix.files_only(),
     )
 
-    copy_to_dist_dir(
-        name = "{}_dist".format(name),
-        data = [
+    pkg_install(
+        name = "{}_host_dist".format(name),
+        srcs = [":{}_host_dist_files".format(name)],
+        destdir = "out/msm-kernel-{}/host".format(name),
+    )
+
+    pkg_files(
+        name = "{}_dist_files".format(name),
+        srcs = [
             ":{}_modules_install".format(name),
             ":{}_signed_modules".format(name),
             ":{}_merge_msm_uapi_headers".format(name),
@@ -120,21 +131,29 @@ def define_single_vm_build(
             base_kernel,
             ":{}_dtb_build/.config".format(name),
         ],
-        dist_dir = "out/msm-kernel-{}/dist".format(name),
-        flat = True,
-        allow_duplicate_filenames = True,
-        log = "info",
+        visibility = ["//visibility:private"],
+        strip_prefix = strip_prefix.files_only(),
     )
 
-    copy_to_dist_dir(
-        name = "{}_um_dist".format(name),
-        archives = [
+    pkg_install(
+        name = "{}_dist".format(name),
+        srcs = [":{}_dist_files".format(name)],
+        destdir = "out/msm-kernel-{}/dist".format(name),
+    )
+
+    pkg_files(
+        name = "{}_um_dist_files".format(name),
+        srcs = [
             "{}_unstripped_modules_tar".format(name),
         ],
-        dist_dir = "out/msm-kernel-{}/dist".format(name),
-        flat = True,
-        wipe_dist_dir = False,
-        log = "info",
+        visibility = ["//visibility:private"],
+        strip_prefix = strip_prefix.files_only(),
+    )
+
+    pkg_install(
+        name = "{}_um_dist".format(name),
+        srcs = [":{}_um_dist_files".format(name)],
+        destdir = "out/msm-kernel-{}/dist".format(name),
     )
 
 def define_vm_build(
@@ -151,7 +170,7 @@ def define_vm_build(
         vm_opts = vm_image_opts()
 
         #use only dtbs related to the variant for dtb image creation
-        if "canoe" in name:
+        if "canoe" in name or "malabar" in name or "seraph" in name or "shikra" in name:
             dtb_list = dtbo_list
 
         if "tuivm" in name:
@@ -190,13 +209,13 @@ def define_typical_vm_build(
         configs = {
             "debug-defconfig": {
                 "config_fragment": debug_config,
-                "base_kernel": "//soc-repo:kernel_aarch64_qtvm_debug",
+                "base_kernel": ":kernel_aarch64_qtvm_debug",
                 "ddk_config_deps": [common_info],
                 "implicit_config_fragment": config,
             } | debug_kwargs,
             "defconfig": {
                 "config_fragment": config,
-                "base_kernel": "//soc-repo:kernel_aarch64_qtvm",
+                "base_kernel": ":kernel_aarch64_qtvm",
                 "ddk_config_deps": [common_info],
             } | config_kwargs,
         },

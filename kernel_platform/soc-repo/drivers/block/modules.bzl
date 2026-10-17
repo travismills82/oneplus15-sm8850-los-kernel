@@ -5,7 +5,7 @@ def register_modules(registry):
 
     registry.register(
         name = "drivers/block/virtio_blk",
-        out = "virtio_blk.ko",
+        out = "virtio_block.ko",
         config = "CONFIG_VIRTIO_BLK",
         srcs = [
             # do not sort

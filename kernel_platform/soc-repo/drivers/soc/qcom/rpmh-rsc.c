@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (c) 2016-2018, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2025, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  */
 
 #define pr_fmt(fmt) "%s " fmt, KBUILD_MODNAME
@@ -25,6 +25,7 @@
 #include <linux/pm_runtime.h>
 #include <linux/slab.h>
 #include <linux/spinlock.h>
+#include <linux/suspend.h>
 #include <linux/wait.h>
 
 #include <clocksource/arm_arch_timer.h>
@@ -825,21 +826,17 @@ int rpmh_rsc_send_data(struct rsc_drv *drv, const struct tcs_request *msg, int c
 	write_tcs_reg_sync(drv, drv->regs[RSC_DRV_CMD_ENABLE], tcs_id, 0);
 	write_tcs_reg_sync(drv, drv->regs[RSC_DRV_CMD_WAIT_FOR_CMPL], tcs_id, 0);
 
+	__tcs_buffer_write(drv, tcs_id, 0, msg);
+
+	/* Clear stale IRQs if any */
+	writel_relaxed(BIT(tcs_id), drv->tcs_base + drv->regs[RSC_DRV_IRQ_CLEAR]);
+
 	if (msg->wait_for_compl || (msg->state == RPMH_ACTIVE_ONLY_STATE &&
 	    tcs->type != ACTIVE_TCS))
 		enable_tcs_irq(drv, tcs_id, true);
 	else
 		enable_tcs_irq(drv, tcs_id, false);
 
-	/*
-	 * These two can be done after the lock is released because:
-	 * - We marked "tcs_in_use" under lock.
-	 * - Once "tcs_in_use" has been marked nobody else could be writing
-	 *   to these registers until the interrupt goes off.
-	 * - The interrupt can't go off until we trigger w/ the last line
-	 *   of __tcs_set_trigger() below.
-	 */
-	__tcs_buffer_write(drv, tcs_id, 0, msg);
 	__tcs_set_trigger(drv, tcs_id, true);
 #if IS_ENABLED(CONFIG_IPC_LOGGING)
 	ipc_log_string(drv->ipc_log_ctx, "TCS trigger: m=%d wait_for_compl=%u",
@@ -962,6 +959,7 @@ static void print_tcs_info(struct rsc_drv *drv, int tcs_id, unsigned long *accl,
 	u32 addr, data, msgid, sts, irq_sts;
 	bool in_use = test_bit(tcs_id, drv->tcs_in_use);
 	int i;
+	u32 irq_enable;
 
 	sts = read_tcs_reg(drv, drv->regs[RSC_DRV_STATUS], tcs_id);
 	cmds_enabled = read_tcs_reg(drv, drv->regs[RSC_DRV_CMD_ENABLE], tcs_id);
@@ -970,6 +968,9 @@ static void print_tcs_info(struct rsc_drv *drv, int tcs_id, unsigned long *accl,
 
 	if (!req)
 		goto print_tcs_data;
+
+	irq_enable = readl_relaxed(drv->tcs_base + drv->regs[RSC_DRV_IRQ_ENABLE]);
+	pr_warn("TCS IRQ enable %u\n", irq_enable);
 
 	data = read_tcs_reg(drv, drv->regs[RSC_DRV_CONTROL], tcs_id);
 	irq_sts = readl_relaxed(drv->tcs_base + drv->regs[RSC_DRV_IRQ_STATUS]);
@@ -1429,10 +1430,12 @@ int rpmh_rsc_init_fast_path(struct rsc_drv *drv, const struct tcs_request *msg, 
 
 	tcs_id = drv->ch[ch].tcs[FAST_PATH_TCS].offset;
 
+	spin_lock_irq(&drv->lock);
 	/* We won't use the AMC IRQ to confirm if the TCS is free */
 	enable_tcs_irq(drv, tcs_id, false);
 
 	__tcs_buffer_write(drv, tcs_id, 0, msg);
+	spin_unlock_irq(&drv->lock);
 
 	return 0;
 }
@@ -1528,6 +1531,16 @@ static int rpmh_rsc_restore_noirq(struct device *dev)
 
 	return 0;
 }
+
+#ifdef CONFIG_DEEPSLEEP
+static int rpmh_rsc_restore_noirq_wrapper(struct device *dev)
+{
+	if (pm_suspend_target_state == PM_SUSPEND_MEM)
+		return rpmh_rsc_restore_noirq(dev);
+
+	return 0;
+}
+#endif
 
 static struct rsc_drv_top *rpmh_rsc_get_top_device(const char *name)
 {
@@ -1657,7 +1670,7 @@ static int rpmh_rsc_pd_callback(struct notifier_block *nfb,
 
 	/* We don't need to lock as genpd on/off are serialized */
 	if ((action == GENPD_NOTIFY_PRE_OFF) &&
-	    (ch < 0 || rpmh_rsc_ctrlr_is_busy(drv) || _rpmh_flush(&drv->client, ch)))
+	    (ch < 0 || rpmh_rsc_ctrlr_is_busy(drv) || rpmh_flush(&drv->client, ch)))
 		return NOTIFY_BAD;
 
 	return NOTIFY_OK;
@@ -1900,6 +1913,10 @@ static int rpmh_rsc_probe(struct platform_device *pdev)
 static const struct dev_pm_ops rpmh_rsc_dev_pm_ops = {
 	.poweroff_noirq = rpmh_rsc_poweroff_noirq,
 	.restore_noirq = rpmh_rsc_restore_noirq,
+#ifdef CONFIG_DEEPSLEEP
+	.suspend_noirq = rpmh_rsc_poweroff_noirq,
+	.resume_noirq = rpmh_rsc_restore_noirq_wrapper,
+#endif
 };
 
 static const struct of_device_id rpmh_drv_match[] = {

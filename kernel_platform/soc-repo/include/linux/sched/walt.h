@@ -52,7 +52,7 @@ enum task_boost_type {
 	TASK_BOOST_END,
 };
 
-#define WALT_NR_CPUS 8
+#define WALT_NR_CPUS CONFIG_SCHED_WALT_NR_CPUS
 #define RAVG_HIST_SIZE 5
 /* wts->bucket_bitmask needs to be updated if NUM_BUSY_BUCKETS > 16 */
 #define NUM_BUSY_BUCKETS 16
@@ -107,6 +107,9 @@ struct walt_task_struct {
 	 *
 	 * 'prev_on_rq' tracks enqueue/dequeue of a task for error conditions
 	 * 0 = nothing, 1 = enqueued, 2 = dequeued
+	 *
+	 * 'lib_app_state' tracks if task is a lib based application
+	 * <bit 7>: result of lib evaluation, <bit 6-0>: lib name update count
 	 */
 	u32				flags;
 	u64				mark_start;
@@ -165,11 +168,19 @@ struct walt_task_struct {
 	u64				yield_ts;
 	u64				yield_total_sleep_usec;
 	s64				lst_tgt_ns;
-	u32				lst_state_counter;
-	unsigned int			continuous_active;
+	int				lst_state_counter;
 	bool				lst;
-	u32				pipeline_activity_cnt;
+	int				pipeline_activity_cnt;
 	atomic_t			event_windows;
+	u8				lib_app_state;
+
+	/*
+	 * Smart Freq misfit delay timer (per-task).
+	 *   0       = no pending sf_misfit
+	 *   non-zero = sf_misfit pending; value is the wallclock timestamp
+	 *              when misfit was first detected under smart_freq limiting.
+	 */
+	u64				sf_misfit_time;
 };
 
 #define wts_to_ts(wts) ({ \

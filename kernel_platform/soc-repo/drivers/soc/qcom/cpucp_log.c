@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2020, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  */
 
 #include <linux/kernel.h>
@@ -54,6 +54,7 @@ enum cpucp_log_type {
 	CPUCP,
 	PDP0,
 	PDP1,
+	PDP2,
 	NUM_CPUCP_LOG_TYPES
 };
 
@@ -61,6 +62,7 @@ static const char * const cpucp_log_names[NUM_CPUCP_LOG_TYPES] = {
 	[CPUCP]		= "cpucp",
 	[PDP0]		= "pdp0",
 	[PDP1]		= "pdp1",
+	[PDP2]		= "pdp2",
 };
 
 struct remote_mem {
@@ -331,6 +333,9 @@ static inline void print_to_trace(enum cpucp_log_type type, char *str)
 	case PDP1:
 		trace_pdp1_log(str);
 		break;
+	case PDP2:
+		trace_pdp2_log(str);
+		break;
 	default:
 		break;
 	}
@@ -428,6 +433,7 @@ static void cpucp_log_rx(struct mbox_client *client, void *msg)
 	u64 *data = (u64 *)msg;
 	u32 buf_start;
 	u32 cap_size;
+	u32 buf_offset = 0;
 	int i;
 
 	buf_node = get_free_buffer(info);
@@ -460,6 +466,7 @@ static void cpucp_log_rx(struct mbox_client *client, void *msg)
 		break;
 	case PDP0:
 	case PDP1:
+	case PDP2:
 		if (!data) {
 			dev_err(dev, "pdp_log error: mbox data is NULL\n");
 			return;
@@ -467,17 +474,21 @@ static void cpucp_log_rx(struct mbox_client *client, void *msg)
 		*data >>= 32;
 		buf_start = FIELD_GET(GENMASK(23, 0), *data) << 8;
 		cap_size = (FIELD_GET(GENMASK(31, 24), *data) + 1) << 8;
+
 		for (i = 0; i < info->num_bufs; i++)  {
-			if (buf_start == info->rmem[i].phys_addr)
-				break;
+			if (buf_start >= info->rmem[i].phys_addr) {
+				buf_offset = buf_start - info->rmem[i].phys_addr;
+				/* only use if it starts within the buffer */
+				if (buf_offset < info->rmem[i].size)
+					break;
+			}
 		}
 		if (i >= info->num_bufs) {
-			dev_err(dev, "pdp_log error: couldn't match buf_start addr\n");
+			dev_err(dev, "couldn't match buf_start addr: 0x%08x\n", buf_start);
 			return;
 		}
-
-		src = info->rmem[i].start;
-		rmem_size = min(cap_size, info->rmem->size);
+		src = info->rmem[i].start + buf_offset;
+		rmem_size = min(cap_size, info->rmem[i].size - buf_offset);
 		break;
 	default:
 		return;
@@ -612,7 +623,7 @@ scmi_out:
 		}
 	}
 #endif
-	if (info->type == PDP0 || info->type == PDP1) {
+	if (info->type == PDP0 || info->type == PDP1 || info->type == PDP2) {
 		if (pdp_log_create_fs_entries(info)) {
 			dev_err(dev, "Failed to create pdp debugfs entries\n");
 			return -ENOENT;

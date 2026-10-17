@@ -14,7 +14,6 @@ static int neg_five = -5;
 static int three = 3;
 static int four = 4;
 static int five = 5;
-static int two_hundred_fifty_five = 255;
 static unsigned int ns_per_sec = NSEC_PER_SEC;
 static unsigned int one_hundred_thousand = 100000;
 static unsigned int two_hundred_million = 200000000;
@@ -24,6 +23,11 @@ static int one_thousand = 1000;
 static int one_thousand_twenty_four = 1024;
 static int two_thousand = 2000;
 static int max_nr_pipeline = MAX_NR_PIPELINE;
+
+/* This is the decimal value of max supported cpus by WALT.
+ * Maximum number of supported cpus are calculated as MAX_CLUSTERS * MAX_CPUS_PER_CLUSTER
+ */
+static u32 max_supported_cpus_value = GENMASK_TYPE(u32, (MAX_CLUSTERS * MAX_CPUS_PER_CLUSTER)-1, 0);
 
 /*
  * CFS task prio range is [100 ... 139]
@@ -65,11 +69,6 @@ unsigned int sysctl_sched_wake_up_idle[2];
 unsigned int sysctl_input_boost_ms;
 unsigned int sysctl_input_boost_freq[WALT_NR_CPUS];
 unsigned int sysctl_sched_boost_on_input;
-#if IS_ENABLED(CONFIG_OPLUS_FEATURE_CEILING_FREE)
-unsigned int sysctl_ceiling_free_enable;
-unsigned int sysctl_cb_ceiling_free_enable = 1;
-unsigned int sysctl_omrg_ceiling_free_enable = 1;
-#endif
 unsigned int sysctl_sched_early_up[MAX_MARGIN_LEVELS];
 unsigned int sysctl_sched_early_down[MAX_MARGIN_LEVELS];
 
@@ -150,9 +149,6 @@ unsigned int load_sync_low_pct_60fps[MAX_CLUSTERS][MAX_CLUSTERS];
 unsigned int load_sync_high_pct[MAX_CLUSTERS][MAX_CLUSTERS];
 unsigned int load_sync_high_pct_60fps[MAX_CLUSTERS][MAX_CLUSTERS];
 unsigned int sysctl_force_frequent_yielder;
-#if IS_ENABLED(CONFIG_OPLUS_FEATURE_PIPELINE)
-unsigned int sysctl_yielder_disable;
-#endif
 unsigned int sysctl_pipeline_special_task_util_thres;
 unsigned int sysctl_pipeline_non_special_task_util_thres;
 unsigned int sysctl_pipeline_pin_thres_low_pct;
@@ -232,6 +228,37 @@ unlock_mutex:
 	return ret;
 }
 
+u8 lib_update_cnt;
+static int walt_lib_name_handler(const struct ctl_table *table, int write,
+				       void __user *buffer, size_t *lenp,
+				       loff_t *ppos)
+{
+	int ret;
+	static DEFINE_MUTEX(mutex);
+	char old_path[LIB_PATH_LENGTH];
+
+	mutex_lock(&mutex);
+
+	if (!write) {
+		ret = proc_dostring(table, write, buffer, lenp, ppos);
+		goto unlock_mutex;
+	}
+
+	strscpy(old_path, sched_lib_name, sizeof(old_path));
+	ret = proc_dostring(table, write, buffer, lenp, ppos);
+	if (ret)
+		goto unlock_mutex;
+
+	/* update count if there is change in library list */
+	if (strcmp(old_path, sched_lib_name))
+		lib_update_cnt = (lib_update_cnt + 1) % LIB_UPDATE_CNT_MAX;
+
+unlock_mutex:
+	mutex_unlock(&mutex);
+
+	return ret;
+}
+
 static int walt_proc_user_hint_handler(const struct ctl_table *table,
 				int write, void __user *buffer, size_t *lenp,
 				loff_t *ppos)
@@ -300,9 +327,12 @@ static int walt_proc_pipeline_cpus_handler(const struct ctl_table *table,
 	unsigned int old_value;
 	unsigned long bitmask;
 	const unsigned long *bitmaskp = &bitmask;
+	cpumask_t tmp;
 	static bool written_once;
 	static DEFINE_MUTEX(mutex);
 	struct ctl_table local_table = *table;
+	struct walt_sched_cluster *cluster;
+	int idx = 0;
 
 	mutex_lock(&mutex);
 
@@ -318,8 +348,27 @@ static int walt_proc_pipeline_cpus_handler(const struct ctl_table *table,
 
 	bitmask = (unsigned long)sysctl_sched_pipeline_cpus;
 	bitmap_copy(sysctl_bitmap, bitmaskp, WALT_NR_CPUS);
-	cpumask_copy(&cpus_for_pipeline, to_cpumask(sysctl_bitmap));
+	cpumask_copy(&tmp, to_cpumask(sysctl_bitmap));
+	for_each_sched_cluster(cluster) {
+		if (cpumask_intersects(&cluster->cpus, &tmp)) {
+			if (!idx)
+				pipeline_lower_cluster_id = cluster->id;
+			else
+				pipeline_higher_cluster_id = cluster->id;
+			idx++;
+		}
+	}
+	/* Pipeline is confined within two clusters only */
+	if (idx > 2) {
+		sysctl_sched_pipeline_cpus = old_value;
+		ret = -EINVAL;
+		goto unlock;
+	}
 
+	if (idx == 1)
+		single_cluster_pipeline = true;
+
+	cpumask_copy(&cpus_for_pipeline, &tmp);
 	written_once = true;
 unlock:
 	mutex_unlock(&mutex);
@@ -733,7 +782,7 @@ int sched_updown_migrate_handler(const struct ctl_table *table, int write,
 
 	/* check if valid pct values are passed in */
 	for (i = 0; i < cap_margin_levels; i++) {
-		if (val[i] <= 0 || val[i] > 100) {
+		if (val[i] <= 0) {
 			ret = -EINVAL;
 			goto unlock_mutex;
 		}
@@ -805,7 +854,7 @@ int sched_cgroup_updown_migrate_handler(const struct ctl_table *table, int write
 
 	/* check if valid pct values are passed in */
 	for (i = 0; i < NUM_UPDOWN_SETTINGS; i++) {
-		if (val[i] <= 0 || val[i] > 100) {
+		if (val[i] <= 0) {
 			ret = -EINVAL;
 			goto unlock_mutex;
 		}
@@ -1695,35 +1744,6 @@ static struct ctl_table input_boost_sysctls[] = {
 		.extra1		= SYSCTL_ZERO,
 		.extra2		= SYSCTL_INT_MAX,
 	},
-#if IS_ENABLED(CONFIG_OPLUS_FEATURE_CEILING_FREE)
-	{
-		.procname	= "ceiling_free_enable",
-		.data		= &sysctl_ceiling_free_enable,
-		.maxlen		= sizeof(unsigned int),
-		.mode		= 0644,
-		.proc_handler	= proc_dointvec_minmax,
-		.extra1		= SYSCTL_ZERO,
-		.extra2		= SYSCTL_ONE,
-	},
-	{
-		.procname	= "cb_ceiling_free_enable",
-		.data		= &sysctl_cb_ceiling_free_enable,
-		.maxlen		= sizeof(unsigned int),
-		.mode		= 0644,
-		.proc_handler	= proc_dointvec_minmax,
-		.extra1		= SYSCTL_ZERO,
-		.extra2		= SYSCTL_ONE,
-	},
-	{
-		.procname	= "omrg_ceiling_free_enable",
-		.data		= &sysctl_omrg_ceiling_free_enable,
-		.maxlen		= sizeof(unsigned int),
-		.mode		= 0644,
-		.proc_handler	= proc_dointvec_minmax,
-		.extra1		= SYSCTL_ZERO,
-		.extra2		= SYSCTL_ONE,
-	},
-#endif
 };
 
 static struct ctl_table walt_table[] = {
@@ -1845,7 +1865,7 @@ static struct ctl_table walt_table[] = {
 		.mode		= 0644,
 		.proc_handler	= sched_busy_hyst_handler,
 		.extra1		= SYSCTL_ZERO,
-		.extra2		= &two_hundred_fifty_five,
+		.extra2		= &max_supported_cpus_value,
 	},
 	{
 		.procname	= "sched_busy_hyst_ns",
@@ -1863,7 +1883,7 @@ static struct ctl_table walt_table[] = {
 		.mode		= 0644,
 		.proc_handler	= sched_busy_hyst_handler,
 		.extra1		= SYSCTL_ZERO,
-		.extra2		= &two_hundred_fifty_five,
+		.extra2		= &max_supported_cpus_value,
 	},
 	{
 		.procname	= "sched_coloc_busy_hyst_cpu_ns",
@@ -1899,7 +1919,7 @@ static struct ctl_table walt_table[] = {
 		.mode		= 0644,
 		.proc_handler	= sched_busy_hyst_handler,
 		.extra1		= SYSCTL_ZERO,
-		.extra2		= &two_hundred_fifty_five,
+		.extra2		= &max_supported_cpus_value,
 	},
 	{
 		.procname	= "sched_util_busy_hyst_cpu_ns",
@@ -2030,7 +2050,7 @@ static struct ctl_table walt_table[] = {
 		.data		= sched_lib_name,
 		.maxlen		= LIB_PATH_LENGTH,
 		.mode		= 0644,
-		.proc_handler	= proc_dostring,
+		.proc_handler	= walt_lib_name_handler,
 	},
 	{
 		.procname	= "sched_lib_task",
@@ -2046,7 +2066,7 @@ static struct ctl_table walt_table[] = {
 		.mode		= 0644,
 		.proc_handler	= proc_douintvec_minmax,
 		.extra1		= SYSCTL_ZERO,
-		.extra2		= &two_hundred_fifty_five,
+		.extra2		= &max_supported_cpus_value,
 	},
 	{
 		.procname	= "sched_wake_up_idle",
@@ -2399,17 +2419,6 @@ static struct ctl_table walt_table[] = {
 		.extra1		= SYSCTL_ZERO,
 		.extra2		= SYSCTL_ONE,
 	},
-#if IS_ENABLED(CONFIG_OPLUS_FEATURE_PIPELINE)
-	{
-		.procname	= "sched_yielder_disable",
-		.data		= &sysctl_yielder_disable,
-		.maxlen		= sizeof(unsigned int),
-		.mode		= 0644,
-		.proc_handler	= proc_dointvec_minmax,
-		.extra1		= SYSCTL_ZERO,
-		.extra2		= SYSCTL_ONE,
-	},
-#endif
 	{
 		.procname	= "sched_frame_rate",
 		.data		= &sysctl_frame_rate,

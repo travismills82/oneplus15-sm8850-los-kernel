@@ -16,6 +16,15 @@
 #define NAME_LENGTH 0x12
 #define REGS_MAX 3
 
+#define C2_COUNT_ID_OFFSET 16
+#define C4_COUNT_ID_OFFSET 32
+#define CL5_COUNT_ID_OFFSET 52
+#define SS3_COUNT_ID_OFFSET 60
+#define C2_RESIDENCY_ID_OFFSET 17
+#define C4_RESIDENCY_ID_OFFSET 33
+#define CL5_RESIDENCY_ID_OFFSET 53
+#define SS3_RESIDENCY_ID_OFFSET 61
+
 #define QCOM_CORE_SLEEP_STATS_SHOW(name)	\
 static int qcom_stats_core_##name##_show(struct seq_file *s, void *d)	\
 {									\
@@ -139,24 +148,24 @@ static void qcom_create_count_file(struct qcom_stats_prvdata *pdata)
 
 	if (of_device_is_compatible(pdata->pdev->dev.of_node, "qcom,cpuss-sleep-stats-v6")) {
 		for (i = 0; i < pdata->ncluster; i++) {
-			pdata->cluster_id[i].cl5_count_id = 36 + i * 2;
+			pdata->cluster_id[i].cl5_count_id = CL5_COUNT_ID_OFFSET + i * 2;
 			debugfs_create_file("CL5_Count", 0400, pdata->cluster_dir[i],
 				(void *)&pdata->cluster_id[i].cl5_count_id,
 				&qcom_stats_cluster_cpuss_count_fops);
 		}
 
-		pdata->cpuss_id->ss3_count_id = 44;
+		pdata->cpuss_id->ss3_count_id = SS3_COUNT_ID_OFFSET;
 		debugfs_create_file("SS3_Count", 0400, pdata->cpuss_dir,
 			(void *)&pdata->cpuss_id->ss3_count_id,
 			&qcom_stats_cluster_cpuss_count_fops);
 
 		for (i = 0; i < pdata->ncpu; i++) {
-			pdata->core_id[i].c2_count_id = i * 2;
+			pdata->core_id[i].c2_count_id = C2_COUNT_ID_OFFSET + i * 2;
 			debugfs_create_file("C2_Count", 0400, pdata->cpu_dir[i],
 					(void *)&pdata->core_id[i].c2_count_id,
 					&qcom_stats_core_count_fops);
 
-			pdata->core_id[i].c4_count_id = 16 + i * 2;
+			pdata->core_id[i].c4_count_id = C4_COUNT_ID_OFFSET + i * 2;
 			debugfs_create_file("C4_Count", 0400, pdata->cpu_dir[i],
 					(void *)&pdata->core_id[i].c4_count_id,
 					&qcom_stats_core_count_fops);
@@ -188,24 +197,24 @@ static void qcom_create_resindency_file(struct qcom_stats_prvdata *pdata)
 
 	if (of_device_is_compatible(pdata->pdev->dev.of_node, "qcom,cpuss-sleep-stats-v6")) {
 		for (i = 0; i < pdata->ncluster; i++) {
-			pdata->cluster_id[i].cl5_residency_id = 37 + i * 2;
+			pdata->cluster_id[i].cl5_residency_id = CL5_RESIDENCY_ID_OFFSET + i * 2;
 			debugfs_create_file("CL5_Residency", 0400, pdata->cluster_dir[i],
 				(void *)&pdata->cluster_id[i].cl5_residency_id,
 				&qcom_stats_cluster_cpuss_residency_fops);
 		}
 
-		pdata->cpuss_id->ss3_residency_id = 45;
+		pdata->cpuss_id->ss3_residency_id = SS3_RESIDENCY_ID_OFFSET;
 		debugfs_create_file("SS3_Residency", 0400, pdata->cpuss_dir,
 			(void *)&pdata->cpuss_id->ss3_residency_id,
 			&qcom_stats_cluster_cpuss_residency_fops);
 
 		for (i = 0; i < pdata->ncpu; i++) {
-			pdata->core_id[i].c2_residency_id = 1 + i * 2;
+			pdata->core_id[i].c2_residency_id = C2_RESIDENCY_ID_OFFSET + i * 2;
 			debugfs_create_file("C2_Residency", 0400, pdata->cpu_dir[i],
 					(void *)&pdata->core_id[i].c2_residency_id,
 					&qcom_stats_core_residency_fops);
 
-			pdata->core_id[i].c4_residency_id = 17 + i * 2;
+			pdata->core_id[i].c4_residency_id = C4_RESIDENCY_ID_OFFSET + i * 2;
 			debugfs_create_file("C4_Residency", 0400, pdata->cpu_dir[i],
 					(void *)&pdata->core_id[i].c4_residency_id,
 					&qcom_stats_core_residency_fops);

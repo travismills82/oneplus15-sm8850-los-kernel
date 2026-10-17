@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  */
 
 #define pr_fmt(fmt) "Minidump: " fmt
@@ -246,7 +246,7 @@ static int md_rm_init_md_table(void)
 		return -EINVAL;
 	}
 
-	return ret;
+	return 0;
 }
 
 static int md_rm_add_pending_entry(struct list_head *pending_list)

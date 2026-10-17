@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: (GPL-2.0 OR MIT) */
 // Copyright (c) 2018 Synopsys, Inc. and/or its affiliates.
+// Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 // stmmac HW Interface Callbacks
 
 #ifndef __STMMAC_HWIF_H__
@@ -396,6 +397,7 @@ struct stmmac_ops {
 	/* Safety Features */
 	int (*safety_feat_config)(void __iomem *ioaddr, unsigned int asp,
 				  struct stmmac_safety_feature_cfg *safety_cfg);
+	int (*safety_feat_disable)(void __iomem *ioaddr);
 	int (*safety_feat_irq_status)(struct net_device *ndev,
 			void __iomem *ioaddr, unsigned int asp,
 			struct stmmac_safety_stats *stats);
@@ -452,6 +454,7 @@ struct stmmac_ops {
 	int (*fpe_map_preemption_class)(struct net_device *ndev,
 					struct netlink_ext_ack *extack,
 					u32 pclass);
+	void (*flush_tx_mtl)(struct stmmac_priv *priv, struct mac_device_info *hw, u32 chan);
 };
 
 #define stmmac_core_init(__priv, __args...) \
@@ -514,6 +517,8 @@ struct stmmac_ops {
 	stmmac_do_void_callback(__priv, mac, pcs_get_adv_lp, __args)
 #define stmmac_safety_feat_config(__priv, __args...) \
 	stmmac_do_callback(__priv, mac, safety_feat_config, __args)
+#define stmmac_safety_feat_disable(__priv, __args...) \
+	stmmac_do_callback(__priv, mac, safety_feat_disable, __args)
 #define stmmac_safety_feat_irq_status(__priv, __args...) \
 	stmmac_do_callback(__priv, mac, safety_feat_irq_status, __args)
 #define stmmac_safety_feat_dump(__priv, __args...) \
@@ -562,6 +567,8 @@ struct stmmac_ops {
 	stmmac_do_void_callback(__priv, mac, fpe_set_add_frag_size, __args)
 #define stmmac_fpe_map_preemption_class(__priv, __args...) \
 	stmmac_do_void_callback(__priv, mac, fpe_map_preemption_class, __args)
+#define stmmac_flush_tx_mtl(__priv, __args...) \
+	stmmac_do_void_callback(__priv, mac, flush_tx_mtl, __priv, __args)
 
 /* PTP and HW Timer helpers */
 struct stmmac_hwtimestamp {

@@ -1,3 +1,4 @@
+load(":soc_repo_path.bzl", "SOC_MODULES_REPO_PATH")
 load(":drivers/soc/qcom/dcvs/modules.bzl", register_dcvs = "register_modules")
 load(":drivers/soc/qcom/hab/modules.bzl", register_hab = "register_modules")
 load(":drivers/soc/qcom/mem_buf/modules.bzl", register_mem_buf = "register_modules")
@@ -27,6 +28,20 @@ def register_modules(registry):
         deps = [
             # do not sort
             "drivers/firmware/qcom/qcom-scm",
+        ],
+    )
+
+    registry.register(
+        name = "drivers/soc/qcom/cx-ipeak",
+        out = "cx-ipeak.ko",
+        config = "CONFIG_QCOM_CX_IPEAK",
+        srcs = [
+            # do not sort
+            "drivers/soc/qcom/cx_ipeak.c",
+            "include/soc/qcom/cx_ipeak.h",
+        ],
+        deps = [
+            # do not sort
         ],
     )
 
@@ -152,7 +167,7 @@ def register_modules(registry):
             "drivers/virt/gunyah/gh_msgq",
             "drivers/virt/gunyah/gh_dbl",
             "arch/arm64/gunyah/gh_arm_drv",
-            "//vendor/oplus/kernel/boot:oplus_bsp_bootmode",
+            "//{}/oplus/kernel/boot:oplus_bsp_bootmode".format(SOC_MODULES_REPO_PATH),
         ],
         local_defines = ["OPLUS_FEATURE_CHG_BASIC"],
     )
@@ -251,6 +266,8 @@ def register_modules(registry):
             "drivers/soc/qcom/mem_buf/mem_buf_dev",
             "drivers/soc/qcom/secure_buffer",
             "drivers/firmware/qcom/qcom-scm",
+            "drivers/firmware/qcom/qcom_scm_smci",
+            "drivers/firmware/qcom/si_core/si_core_module",
             "drivers/virt/gunyah/gh_rm_drv",
             "drivers/virt/gunyah/gh_msgq",
             "drivers/virt/gunyah/gh_dbl",
@@ -368,6 +385,7 @@ def register_modules(registry):
         deps = [
             # do not sort
             "drivers/firmware/qcom/qcom-scm",
+            "drivers/soc/qcom/cpu_phys_log_map",
         ],
     )
 
@@ -396,6 +414,19 @@ def register_modules(registry):
         srcs = [
             # do not sort
             "drivers/soc/qcom/hung_task_enh.c",
+        ],
+    )
+
+    registry.register(
+        name = "drivers/soc/qcom/hwkm",
+        out = "hwkm.ko",
+        config = "CONFIG_QTI_HW_KEY_MANAGER_V1",
+        srcs = [
+            # do not sort
+            "drivers/soc/qcom/hwkm.c",
+            "drivers/soc/qcom/hwkm_v1.h",
+            "drivers/soc/qcom/hwkm_serialize.h",
+            "drivers/soc/qcom/hwkmregs.h",
         ],
     )
 
@@ -433,6 +464,20 @@ def register_modules(registry):
             # do not sort
             "drivers/soc/qcom/llcc-qcom.c",
         ],
+        deps = [
+            # do not sort
+            "drivers/soc/qcom/socinfo",
+        ],
+    )
+
+    registry.register(
+        name = "drivers/soc/qcom/llcc_perf_debug",
+        out = "llcc_perf_debug.ko",
+        config = "CONFIG_QCOM_LLCC_DEBUG",
+        srcs = [
+            # do not sort
+            "drivers/soc/qcom/llcc_perf_debug.c",
+        ],
     )
 
     registry.register(
@@ -450,6 +495,8 @@ def register_modules(registry):
             "drivers/virt/gunyah/gh_msgq",
             "drivers/virt/gunyah/gh_dbl",
             "arch/arm64/gunyah/gh_arm_drv",
+            "drivers/firmware/qcom/qcom_scm_smci",
+            "drivers/firmware/qcom/si_core/si_core_module",
         ],
     )
 
@@ -511,6 +558,8 @@ def register_modules(registry):
             "drivers/soc/qcom/mem_buf/mem_buf_dev",
             "drivers/soc/qcom/secure_buffer",
             "drivers/firmware/qcom/qcom-scm",
+            "drivers/firmware/qcom/qcom_scm_smci",
+            "drivers/firmware/qcom/si_core/si_core_module",
             "drivers/virt/gunyah/gh_rm_drv",
             "drivers/virt/gunyah/gh_msgq",
             "drivers/virt/gunyah/gh_dbl",
@@ -644,6 +693,20 @@ def register_modules(registry):
         srcs = [
             # do not sort
             "drivers/soc/qcom/pcie-pdc.c",
+        ],
+    )
+
+    registry.register(
+        name = "drivers/soc/qcom/power_state",
+        out = "power_state.ko",
+        config = "CONFIG_MSM_POWER_STATE",
+        srcs = [
+            # do not sort
+            "drivers/soc/qcom/power_state.c",
+        ],
+        deps = [
+            # do not sort
+            "drivers/remoteproc/rproc_qcom_common",
         ],
     )
 
@@ -833,7 +896,9 @@ def register_modules(registry):
         deps = [
             # do not sort
             "drivers/soc/qcom/qcom_cpucp.c",
+            "drivers/soc/qcom/dcvs/qcom_scmi_client",
             "kernel/sched/walt/sched-walt",
+            "drivers/soc/qcom/cpu_phys_log_map",
         ],
     )
 
@@ -908,6 +973,7 @@ def register_modules(registry):
         srcs = [
             # do not sort
             "drivers/soc/qcom/ice.c",
+            "drivers/soc/qcom/hwkm_v1.h",
         ],
         deps = [
             # do not sort
@@ -916,6 +982,7 @@ def register_modules(registry):
             "drivers/virt/gunyah/gh_msgq",
             "drivers/virt/gunyah/gh_dbl",
             "arch/arm64/gunyah/gh_arm_drv",
+            "drivers/soc/qcom/hwkm",
         ],
     )
 
@@ -1028,6 +1095,20 @@ def register_modules(registry):
     )
 
     registry.register(
+        name = "drivers/soc/qcom/rpm-smd-debug",
+        out = "rpm-smd-debug.ko",
+        config = "CONFIG_MSM_RPM_SMD_DEBUG",
+        srcs = [
+            # do not sort
+            "drivers/soc/qcom/rpm-smd-debug.c",
+        ],
+        deps = [
+            # do not sort
+            "drivers/rpmsg/rpm-smd",
+        ],
+    )
+
+    registry.register(
         name = "drivers/soc/qcom/qcom_soc_wdt",
         out = "qcom_soc_wdt.ko",
         config = "CONFIG_QCOM_SOC_WATCHDOG",
@@ -1073,6 +1154,16 @@ def register_modules(registry):
             "drivers/virt/gunyah/gh_msgq",
             "drivers/virt/gunyah/gh_dbl",
             "arch/arm64/gunyah/gh_arm_drv",
+        ],
+    )
+
+    registry.register(
+        name = "drivers/soc/qcom/rpm_master_stat",
+        out = "rpm_master_stat.ko",
+        config = "CONFIG_QTI_RPM_STATS_LOG",
+        srcs = [
+            # do not sort
+            "drivers/soc/qcom/rpm_master_stat.c",
         ],
     )
 
@@ -1133,10 +1224,8 @@ def register_modules(registry):
             # do not sort
             "drivers/soc/qcom/qcom_wdt_core.c",
         ],
-	local_defines = ["CONFIG_OPLUS_FEATURE_QCOM_WATCHDOG_MODULE"],
         deps = [
             # do not sort
-	    "//vendor/oplus/kernel/boot:oplus_bsp_dfr_qcom_enhance_watchdog",
             "drivers/soc/qcom/minidump",
             "drivers/soc/qcom/smem",
             "drivers/soc/qcom/debug_symbol",
@@ -1171,6 +1260,9 @@ def register_modules(registry):
             # do not sort
             "drivers/soc/qcom/qmi_encdec.c",
             "drivers/soc/qcom/qmi_interface.c",
+        ],
+        deps = [
+            "kernel/trace/qcom_ipc_logging",
         ],
     )
 
@@ -1285,6 +1377,24 @@ def register_modules(registry):
     )
 
     registry.register(
+        name = "drivers/soc/qcom/sc_tcm",
+        out = "sc_tcm.ko",
+        config = "CONFIG_QCOM_SC_TCM_MEM",
+        srcs = [
+            # do not sort
+            "drivers/soc/qcom/sc_tcm.c",
+            "drivers/soc/qcom/sc_tcm_internal.h",
+        ],
+        hdrs = [
+            "include/linux/soc/qcom/sc_tcm.h",
+        ],
+        deps = [
+            # do not sort
+            "drivers/soc/qcom/llcc-qcom",
+        ],
+    )
+
+    registry.register(
         name = "drivers/soc/qcom/secure_buffer",
         out = "secure_buffer.ko",
         config = "CONFIG_QCOM_SECURE_BUFFER",
@@ -1296,10 +1406,6 @@ def register_modules(registry):
         deps = [
             # do not sort
             "drivers/firmware/qcom/qcom-scm",
-            "drivers/virt/gunyah/gh_rm_drv",
-            "drivers/virt/gunyah/gh_msgq",
-            "drivers/virt/gunyah/gh_dbl",
-            "arch/arm64/gunyah/gh_arm_drv",
         ],
     )
 
@@ -1327,6 +1433,20 @@ def register_modules(registry):
     )
 
     registry.register(
+        name = "drivers/soc/qcom/qcom_dbl",
+        out = "qcom_dbl.ko",
+        config = "CONFIG_QCOM_DBL",
+        srcs = [
+            # do not sort
+            "drivers/soc/qcom/qcom_dbl.c",
+        ],
+        deps = [
+            # do not sort
+            "drivers/remoteproc/rproc_qcom_common",
+        ],
+    )
+
+    registry.register(
         name = "drivers/soc/qcom/smp2p",
         out = "smp2p.ko",
         config = "CONFIG_QCOM_SMP2P",
@@ -1350,6 +1470,22 @@ def register_modules(registry):
             "drivers/virt/gunyah/gh_msgq",
             "drivers/virt/gunyah/gh_dbl",
             "arch/arm64/gunyah/gh_arm_drv",
+        ],
+    )
+
+    registry.register(
+        name = "drivers/soc/qcom/smsm",
+        out = "smsm.ko",
+        config = "CONFIG_QCOM_SMSM",
+        srcs = [
+            # do not sort
+            "drivers/soc/qcom/smsm.c",
+        ],
+        deps = [
+            # do not sort
+            "kernel/trace/qcom_ipc_logging",
+            "drivers/soc/qcom/smem",
+            "drivers/soc/qcom/debug_symbol",
         ],
     )
 
@@ -1424,6 +1560,20 @@ def register_modules(registry):
     )
 
     registry.register(
+        name = "drivers/soc/qcom/sys_pm_vx_v2",
+        out = "sys_pm_vx_v2.ko",
+        config = "CONFIG_QTI_SYS_PM_VX_V2",
+        srcs = [
+            # do not sort
+            "drivers/soc/qcom/sys_pm_vx_v2.c",
+        ],
+        deps = [
+            # do not sort
+            "drivers/soc/qcom/qcom_aoss",
+        ],
+    )
+
+    registry.register(
         name = "drivers/soc/qcom/wcd_usbss_i2c",
         out = "wcd_usbss_i2c.ko",
         config = "CONFIG_QCOM_WCD_USBSS_I2C",
@@ -1437,6 +1587,7 @@ def register_modules(registry):
             "drivers/soc/qcom/wcd-usbss-tables.c",
             "drivers/soc/qcom/wcd-usbss-utils.c",
             "drivers/soc/qcom/wcd939x-i2c.c",
+            "drivers/soc/qcom/oplus_audio_switch.h",
         ],
         deps = [
             # do not sort
@@ -1462,8 +1613,11 @@ def register_modules(registry):
             "drivers/virt/gunyah/gh_msgq",
             "drivers/virt/gunyah/gh_dbl",
             "arch/arm64/gunyah/gh_arm_drv",
+            #OPLUS_FEATURE_CHG_BASIC
+            "//{}/oplus/kernel/charger/bazel:{{target_variant}}_oplus_chg_v2".format(SOC_MODULES_REPO_PATH),
+            #OPLUS_FEATURE_CHG_BASIC end
             # Add for oplus mm feedback, CONFIG_OPLUS_FEATURE_MM_FEEDBACK
-            "//vendor/oplus/kernel/multimedia/feedback/bazel:oplus_mm_kevent_fb",
+            "//{}/oplus/kernel/multimedia/feedback/bazel:oplus_mm_kevent_fb".format(SOC_MODULES_REPO_PATH),
         ],
         # Add for oplus config
         copts = ["-DCONFIG_OPLUS_FEATURE_MM_FEEDBACK"],
@@ -1565,7 +1719,7 @@ def register_modules(registry):
     registry.register(
         name = "drivers/soc/qcom/spmi-pmic-err-debug",
         out = "spmi-pmic-err-debug.ko",
-        config = "CONFIG_SPMI_PMIC_ERR_DBG",
+        config = "CONFIG_QCOM_SPMI_PMIC_ERR_DBG",
         srcs = [
             # do not sort
             "drivers/soc/qcom/spmi-pmic-err-debug.c",
@@ -1641,6 +1795,7 @@ def register_modules(registry):
             # do not sort
             "drivers/misc/qseecom_proxy",
             "drivers/soc/qcom/qcom_hib",
+            "drivers/firmware/qcom/si_core/si_core_module",
         ],
         includes = ["include"],
     )
@@ -1659,5 +1814,222 @@ def register_modules(registry):
         deps = [
             # do not sort
             "drivers/soc/qcom/minidump",
+        ],
+    )
+
+    registry.register(
+        name = "drivers/soc/qcom/dhms_rpmsg",
+        out = "dhms_rpmsg.ko",
+        config = "CONFIG_QCOM_DHMS_RPMSG",
+        srcs = [
+            # do not sort
+            "drivers/soc/qcom/dhms_rpmsg.c",
+            "drivers/soc/qcom/dhms_rpmsg.h",
+        ],
+        deps = [
+            # do not sort
+            "drivers/rpmsg/qcom_glink_smem",
+            "drivers/rpmsg/qcom_glink",
+        ],
+    )
+
+    registry.register(
+        name = "drivers/soc/qcom/core_hang_detect",
+        out = "core_hang_detect.ko",
+        config = "CONFIG_MSM_CORE_HANG_DETECT",
+        srcs = [
+            # do not sort
+            "drivers/soc/qcom/core_hang_detect.c",
+        ],
+        deps = [
+            # do not sort
+            "drivers/firmware/qcom/qcom-scm",
+        ],
+        includes = ["include"],
+    )
+
+    registry.register(
+        name = "drivers/soc/qcom/slatecom_event",
+        out = "slatecom_event.ko",
+        config = "CONFIG_MSM_SLATECOM_EVENT",
+        srcs = [
+            # do not sort
+            "drivers/soc/qcom/slatecom_event.c",
+        ],
+        deps = [
+            # do not sort
+            "drivers/soc/qcom/slate_events_bridge",
+        ],
+    )
+
+    registry.register(
+        name = "drivers/soc/qcom/slate_events_bridge",
+        out = "slate_events_bridge.ko",
+        config = "CONFIG_MSM_SEB",
+        srcs = [
+            # do not sort
+            "drivers/soc/qcom/slate_events_bridge_rpmsg.h",
+            "drivers/soc/qcom/slate_events_bridge.h",
+            "drivers/soc/qcom/slate_events_bridge.c",
+        ],
+        deps = [
+            # do not sort
+            "drivers/soc/qcom/slate_events_bridge_rpmsg",
+            "drivers/remoteproc/rproc_qcom_common",
+        ],
+    )
+
+    registry.register(
+        name = "drivers/soc/qcom/slate_events_bridge_rpmsg",
+        out = "slate_events_bridge_rpmsg.ko",
+        config = "CONFIG_MSM_SEB_RPMSG",
+        srcs = [
+            # do not sort
+            "drivers/soc/qcom/slate_events_bridge.h",
+            "drivers/soc/qcom/slate_events_bridge_rpmsg.h",
+            "drivers/soc/qcom/slate_events_bridge_rpmsg.c",
+        ],
+        deps = [
+            # do not sort
+            "drivers/soc/qcom/minidump",
+        ],
+    )
+
+    registry.register(
+        name = "drivers/soc/qcom/slate_rsb",
+        out = "slate_rsb.ko",
+        config = "CONFIG_MSM_SLATERSB",
+        srcs = [
+            # do not sort
+            "drivers/soc/qcom/slate_rsb.c",
+            "drivers/soc/qcom/slate_rsb.h",
+            "drivers/soc/qcom/slatersb_rpmsg.h",
+        ],
+        deps = [
+            # do not sort
+            "drivers/soc/qcom/slatersb_rpmsg",
+            "drivers/remoteproc/rproc_qcom_common",
+        ],
+    )
+
+    registry.register(
+        name = "drivers/soc/qcom/slatersb_rpmsg",
+        out = "slatersb_rpmsg.ko",
+        config = "CONFIG_MSM_SLATERSB_RPMSG",
+        srcs = [
+            # do not sort
+            "drivers/soc/qcom/slatersb_rpmsg.c",
+            "drivers/soc/qcom/slatersb_rpmsg.h",
+            "drivers/soc/qcom/slate_rsb.h",
+        ],
+    )
+
+    registry.register(
+        name = "drivers/soc/qcom/slatecom_spi",
+        out = "slatecom_spi.ko",
+        config = "CONFIG_MSM_SLATECOM",
+        srcs = [
+            # do not sort
+            "drivers/soc/qcom/slatecom_spi.c",
+            "drivers/soc/qcom/slatecom.h",
+            "include/linux/soc/qcom/slatecom_interface.h",
+        ],
+        deps = [
+            "kernel/trace/qcom_ipc_logging",
+        ],
+    )
+
+    registry.register(
+        name = "drivers/soc/qcom/slatecom_interface",
+        out = "slatecom_interface.ko",
+        config = "CONFIG_MSM_SLATECOM_INTERFACE",
+        srcs = [
+            # do not sort
+            "drivers/soc/qcom/slatecom_interface.c",
+            "include/linux/soc/qcom/slatecom_interface.h",
+            "drivers/soc/qcom/slatecom.h",
+            "drivers/soc/qcom/slatecom_rpmsg.h",
+            "include/linux/soc/qcom/slate_events_bridge_intf.h",
+        ],
+        deps = [
+            #do not sort
+            "drivers/soc/qcom/slatecom_spi",
+            "drivers/misc/qseecom_proxy",
+            "drivers/remoteproc/rproc_qcom_common",
+            "drivers/soc/qcom/slate_events_bridge",
+            "drivers/soc/qcom/slatecom_rpmsg",
+        ],
+    )
+
+    registry.register(
+        name = "drivers/soc/qcom/slatecom_rpmsg",
+        out = "slatecom_rpmsg.ko",
+        config = "CONFIG_MSM_SLATECOM_RPMSG",
+        srcs = [
+            # do not sort
+            "drivers/soc/qcom/slatecom_rpmsg.c",
+            "drivers/soc/qcom/slatecom_rpmsg.h",
+        ],
+    )
+
+    registry.register(
+        name = "drivers/soc/qcom/qcom-pbs",
+        out = "qcom-pbs.ko",
+        config = "CONFIG_QCOM_PBS",
+        srcs = [
+            # do not sort
+            "drivers/soc/qcom/qcom-pbs.c",
+        ],
+        deps = [
+            # do not sort
+        ],
+    )
+
+    registry.register(
+        name = "drivers/soc/qcom/bam_dmux",
+        out = "bam_dmux.ko",
+        config = "CONFIG_MSM_BAM_DMUX",
+        srcs = [
+            # do not sort
+            "drivers/soc/qcom/bam_dmux.c",
+        ],
+        hdrs = [
+            "drivers/soc/qcom/bam_dmux_private.h",
+            "include/soc/qcom/bam_dmux.h",
+        ],
+        deps = [
+            # do not sort
+            "drivers/soc/qcom/sps/sps_drv",
+            "drivers/soc/qcom/smem",
+            "drivers/soc/qcom/debug_symbol",
+            "drivers/firmware/qcom/qcom-scm",
+            "drivers/remoteproc/rproc_qcom_common",
+            "kernel/trace/qcom_ipc_logging",
+        ],
+    )
+
+    registry.register(
+        name = "drivers/soc/qcom/power_mode",
+        out = "power_mode.ko",
+        config = "CONFIG_QCOM_POWER_MODE",
+        srcs = [
+            # do not sort
+            "drivers/soc/qcom/power_mode.c",
+        ],
+    )
+
+    registry.register(
+        name = "drivers/soc/qcom/qdss_bridge",
+        out = "qdss_bridge.ko",
+        config = "CONFIG_QCOM_QDSS_BRIDGE",
+        srcs = [
+            # do not sort
+            "drivers/soc/qcom/qdss_bridge.h",
+            "drivers/soc/qcom/qdss_bridge.c",
+        ],
+        deps = [
+            # do not sort
+            "drivers/bus/mhi/host/mhi",
+            "drivers/usb/gadget/function/usb_f_qdss",
         ],
     )

@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
  * Copyright (c) 2016-2017, Linaro Ltd
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  */
 
 #ifndef __QCOM_GLINK_NATIVE_H__
@@ -14,6 +15,7 @@
 #define GLINK_FEATURE_TRACER_PKT	BIT(2)
 #define GLINK_FEATURE_ZERO_COPY		BIT(3)
 #define GLINK_FEATURE_ZERO_COPY_POOLS	BIT(4)
+#define GLINK_FEATURE_SHORT_CMD         BIT(8)
 
 /**
  * rpmsg rx callback return definitions
@@ -40,6 +42,7 @@ struct qcom_glink_pipe {
 		      const void *hdr, size_t hlen,
 		      const void *data, size_t dlen);
 	void (*kick)(struct qcom_glink_pipe *glink_pipe);
+	void (*reset)(struct qcom_glink_pipe *glink_pipe);
 };
 
 struct device;
@@ -64,6 +67,8 @@ int qcom_glink_register_signals_cb(struct rpmsg_endpoint *ept,
 /* These operations are temporarily exposing deferred freeing interfaces */
 bool qcom_glink_rx_done_supported(struct rpmsg_endpoint *ept);
 int qcom_glink_rx_done(struct rpmsg_endpoint *ept, void *data);
+
+void qcom_glink_native_set_rx_wakeup(struct qcom_glink *glink, bool enable);
 
 void *qcom_glink_prepare_da_for_cpu(u64 da, size_t len);
 

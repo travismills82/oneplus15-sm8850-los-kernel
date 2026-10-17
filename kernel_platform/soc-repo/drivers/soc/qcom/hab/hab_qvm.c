@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2016-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023, 2025 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  */
 #include "hab.h"
 #include "hab_qvm.h"
@@ -42,6 +42,11 @@ static struct shmem_irq_config pchan_factory_settings[] = {
 	{0x1b017000, 30},
 	{0x1b018000, 31},
 	{0x1b019000, 32},
+	{0x1b01a000, 33},
+	{0x1b01b000, 34},
+	{0x1b01e000, 35},
+	{0x1b01f000, 36},
+	{0x1b020000, 37},
 };
 
 struct qvm_plugin_info qvm_priv_info = {
@@ -65,6 +70,10 @@ uint64_t get_guest_ctrl_paddr(struct qvm_channel *dev,
 
 	/* get guest factory's va */
 	factory_va = hab_shmem_factory_va(factory_addr);
+	if (!factory_va) {
+		pr_err("failed to map factory addr %lx\n", factory_addr);
+		return 0;
+	}
 	dev->guest_factory = (struct guest_shm_factory *)factory_va;
 
 	if (dev->guest_factory->signature != GUEST_SHM_SIGNATURE) {
@@ -101,7 +110,7 @@ uint64_t get_guest_ctrl_paddr(struct qvm_channel *dev,
 		dev);
 
 	dev->factory_addr = factory_addr;
-	dev->irq = irq;
+	dev->irq = (uint32_t)irq;
 
 	return dev->guest_factory->shmem;
 }
@@ -109,7 +118,7 @@ uint64_t get_guest_ctrl_paddr(struct qvm_channel *dev,
 void hab_pipe_reset(struct physical_channel *pchan)
 {
 	struct hab_pipe_endpoint *pipe_ep;
-	struct qvm_channel *dev  = (struct qvm_channel *)pchan->hyp_data;
+	struct qvm_channel * const dev  = (struct qvm_channel *)pchan->hyp_data;
 
 	pipe_ep = hab_pipe_init(dev->pipe, &dev->tx_buf,
 				&dev->rx_buf, &dev->dbg_itms, PIPE_SHMEM_SIZE,
@@ -132,12 +141,12 @@ int shmem_habhyp_commdev_alloc(void **commdev, int is_be, char *name,
 {
 	struct qvm_channel *dev = NULL;
 	struct qvm_channel_os *dev_os = NULL;
-	struct physical_channel **pchan = (struct physical_channel **)commdev;
+	struct physical_channel ** const pchan = (struct physical_channel **)commdev;
 	int ret = 0;
 	char *shmdata;
-	uint32_t pipe_alloc_size =
+	const uint32_t pipe_alloc_size =
 		hab_pipe_calc_required_bytes(PIPE_SHMEM_SIZE);
-	uint32_t pipe_alloc_pages =
+	const uint32_t pipe_alloc_pages =
 		(pipe_alloc_size + PAGE_SIZE - 1) / PAGE_SIZE;
 
 	pr_debug("%s: pipe_alloc_size is %d\n", __func__, pipe_alloc_size);
@@ -205,8 +214,8 @@ err:
 
 int shmem_habhyp_commdev_dealloc(void *commdev)
 {
-	struct physical_channel *pchan = (struct physical_channel *)commdev;
-	struct qvm_channel *dev = pchan->hyp_data;
+	struct physical_channel * const pchan = (struct physical_channel *)commdev;
+	struct qvm_channel * const dev = pchan->hyp_data;
 
 	/* os specific deallocation for this commdev */
 	shmem_habhyp_commdev_dealloc_os(commdev);

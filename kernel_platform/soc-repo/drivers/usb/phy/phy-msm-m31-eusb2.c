@@ -217,9 +217,9 @@ struct m31_eusb2_phy {
 
 	bool			clocks_enabled;
 	bool			power_enabled;
+	bool			vdd_refgen_enabled;
 	bool			suspended;
 	bool			cable_connected;
-	bool			ref_clk_enable;
 
 	struct power_supply	*usb_psy;
 	unsigned int		vbus_draw;
@@ -287,6 +287,68 @@ static void msm_m31_eusb2_phy_update_eud_detect(struct m31_eusb2_phy *phy, bool 
 					phy->eud_detect_reg);
 }
 
+static int msm_m31_eusb2_phy_refgen_control(struct m31_eusb2_phy *phy, bool on)
+{
+	int ret = 0;
+
+	dev_dbg(phy->phy.dev, "turn %s vdd_refgen regulator. vdd_refgen_enabled:%d\n",
+		on ? "on" : "off", phy->vdd_refgen_enabled);
+
+	if (phy->vdd_refgen_enabled == on) {
+		dev_dbg(phy->phy.dev, "vdd_refgen regulator is already %s.\n",
+			on ? "ON" : "OFF");
+		return 0;
+	}
+
+	if (!on)
+		goto disable_vdd_refgen;
+
+	ret = regulator_set_load(phy->vdd_refgen, USB_HSPHY_VDD_HPM_LOAD);
+	if (ret < 0) {
+		dev_err(phy->phy.dev, "Unable to set HPM of vdd_refgen:%d\n", ret);
+		return ret;
+	}
+
+	ret = regulator_set_voltage(phy->vdd_refgen, phy->vdd_levels[1],
+				    phy->vdd_levels[2]);
+	if (ret) {
+		dev_err(phy->phy.dev,
+			"Unable to set voltage for hsusb vdd_refgen\n");
+		goto put_vdd_refgen_lpm;
+	}
+
+	ret = regulator_enable(phy->vdd_refgen);
+	if (ret) {
+		dev_err(phy->phy.dev, "Unable to enable VDD refgen\n");
+		goto unconfig_vdd_refgen;
+	}
+
+	phy->vdd_refgen_enabled = true;
+	dev_dbg(phy->phy.dev, "vdd_refgen regulator is turned ON.\n");
+	return 0;
+
+disable_vdd_refgen:
+	ret = regulator_disable(phy->vdd_refgen);
+	if (ret)
+		dev_err(phy->phy.dev, "Unable to disable vdd_refgen:%d\n", ret);
+
+unconfig_vdd_refgen:
+	ret = regulator_set_voltage(phy->vdd_refgen, phy->vdd_levels[0],
+				    phy->vdd_levels[2]);
+	if (ret)
+		dev_err(phy->phy.dev,
+			"unable to set voltage for hsusb vdd_refgen\n");
+
+put_vdd_refgen_lpm:
+	ret = regulator_set_load(phy->vdd_refgen, 0);
+	if (ret < 0)
+		dev_err(phy->phy.dev, "Unable to set LPM of vdd_refgen\n");
+
+	phy->vdd_refgen_enabled = false;
+	dev_dbg(phy->phy.dev, "vdd_refgen regulator is turned OFF.\n");
+	return ret;
+}
+
 static int msm_m31_eusb2_phy_power(struct m31_eusb2_phy *phy, bool on)
 {
 	int ret = 0;
@@ -302,24 +364,10 @@ static int msm_m31_eusb2_phy_power(struct m31_eusb2_phy *phy, bool on)
 	if (!on)
 		goto clear_eud_det;
 
-	ret = regulator_set_load(phy->vdd_refgen, USB_HSPHY_VDD_HPM_LOAD);
-	if (ret < 0) {
-		dev_err(phy->phy.dev, "Unable to set HPM of vdd_refgen:%d\n", ret);
+	ret = msm_m31_eusb2_phy_refgen_control(phy, true);
+	if (ret) {
+		dev_err(phy->phy.dev, "Unable to turn on vdd_refgen:%d\n", ret);
 		goto err_vdd;
-	}
-
-	ret = regulator_set_voltage(phy->vdd_refgen, phy->vdd_levels[1],
-				    phy->vdd_levels[2]);
-	if (ret) {
-		dev_err(phy->phy.dev,
-			"Unable to set voltage for hsusb vdd_refgen\n");
-		goto put_vdd_refgen_lpm;
-	}
-
-	ret = regulator_enable(phy->vdd_refgen);
-	if (ret) {
-		dev_err(phy->phy.dev, "Unable to enable VDD refgen\n");
-		goto unconfig_vdd_refgen;
 	}
 
 	ret = regulator_set_load(phy->vdd, USB_HSPHY_VDD_HPM_LOAD);
@@ -413,21 +461,7 @@ put_vdd_lpm:
 		return -EINVAL;
 
 disable_vdd_refgen:
-	ret = regulator_disable(phy->vdd_refgen);
-	if (ret)
-		dev_err(phy->phy.dev, "Unable to disable vdd_refgen:%d\n", ret);
-
-unconfig_vdd_refgen:
-	ret = regulator_set_voltage(phy->vdd_refgen, phy->vdd_levels[0],
-				    phy->vdd_levels[2]);
-	if (ret)
-		dev_err(phy->phy.dev,
-			"unable to set voltage for hsusb vdd_refgen\n");
-
-put_vdd_refgen_lpm:
-	ret = regulator_set_load(phy->vdd_refgen, 0);
-	if (ret < 0)
-		dev_err(phy->phy.dev, "Unable to set LPM of vdd_refgen\n");
+	msm_m31_eusb2_phy_refgen_control(phy, false);
 
 	/* case handling when regulator turning on failed */
 	if (!phy->power_enabled)
@@ -630,16 +664,7 @@ static int msm_m31_eusb2_phy_set_suspend(struct usb_phy *uphy, int suspend)
 		if (phy->cable_connected ||
 			(phy->phy.flags & PHY_HOST_MODE)) {
 			msm_m31_eusb2_phy_clocks(phy, false);
-			/*
-			 * Keep the ref_clk for PHY on to detect resume signalling in bus
-			 * suspend case. As this vote is suppressible, this will allow XO
-			 * shutdown.
-			 */
-			if (phy->ref_clk && !phy->ref_clk_enable) {
-				phy->ref_clk_enable = true;
-				clk_prepare_enable(phy->ref_clk);
-			}
-
+			msm_m31_eusb2_phy_refgen_control(phy, false);
 			goto suspend_exit;
 		}
 
@@ -654,11 +679,6 @@ static int msm_m31_eusb2_phy_set_suspend(struct usb_phy *uphy, int suspend)
 		if (phy->phy.flags & EUD_SPOOF_DISCONNECT || is_eud_debug_mode_active(phy))
 			goto suspend_exit;
 
-		if (phy->ref_clk && phy->ref_clk_enable) {
-			clk_disable_unprepare(phy->ref_clk);
-			phy->ref_clk_enable = false;
-		}
-
 		msm_m31_eusb2_phy_clocks(phy, false);
 		msm_m31_eusb2_phy_power(phy, false);
 
@@ -667,6 +687,7 @@ static int msm_m31_eusb2_phy_set_suspend(struct usb_phy *uphy, int suspend)
 		usb_repeater_powerdown(phy->ur);
 	} else {
 		/* Bus resume and cable connect handling */
+		msm_m31_eusb2_phy_refgen_control(phy, true);
 		msm_m31_eusb2_phy_clocks(phy, true);
 	}
 
@@ -774,7 +795,7 @@ static int msm_m31_eusb2_phy_probe(struct platform_device *pdev)
 		goto err_ret;
 	}
 
-	ur = devm_usb_get_repeater_by_phandle(dev, "usb-repeater", 0);
+	ur = devm_usb_get_optional_repeater_by_phandle(dev, "usb-repeater", 0);
 	if (IS_ERR(ur)) {
 		dev_dbg(dev, "Repeater not available!\n");
 		ret = PTR_ERR(ur);

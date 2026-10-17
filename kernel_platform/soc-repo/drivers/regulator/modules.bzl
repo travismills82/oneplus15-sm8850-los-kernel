@@ -107,6 +107,27 @@ def register_modules(registry):
     )
 
     registry.register(
+        name = "drivers/regulator/rpm-smd-regulator",
+        out = "rpm-smd-regulator.ko",
+        config = "CONFIG_REGULATOR_RPM_SMD",
+        srcs = [
+            # do not sort
+            "drivers/regulator/rpm-smd-regulator.c",
+        ],
+        deps = [
+            # do not sort
+            "drivers/rpmsg/rpm-smd",
+            "drivers/regulator/debug-regulator",
+            "drivers/regulator/proxy-consumer",
+            "drivers/rpmsg/qcom_glink",
+            "drivers/rpmsg/qcom_glink_smem",
+            "drivers/rpmsg/qcom_glink_spss",
+            "drivers/rpmsg/qcom_glink_rpm",
+            "drivers/rpmsg/glink_qcom",
+        ],
+    )
+
+    registry.register(
         name = "drivers/regulator/stub-regulator",
         out = "stub-regulator.ko",
         config = "CONFIG_REGULATOR_STUB",
@@ -169,6 +190,32 @@ def register_modules(registry):
         srcs = [
             # do not sort
             "drivers/regulator/qcom-pm8008-regulator.c",
+        ],
+        deps = [
+            # do not sort
+        ],
+    )
+
+    registry.register(
+        name = "drivers/regulator/renesas-slg5bleft",
+        out = "renesas-slg5bleft.ko",
+        config = "CONFIG_REGULATOR_RENESAS_SLG5BLEFT",
+        srcs = [
+            # do not sort
+            "drivers/regulator/renesas-slg5bleft.c",
+        ],
+        deps = [
+            # do not sort
+        ],
+    )
+
+    registry.register(
+        name = "drivers/regulator/renesas-slg5bright",
+        out = "renesas-slg5bright.ko",
+        config = "CONFIG_REGULATOR_RENESAS_SLG5BRIGHT",
+        srcs = [
+            # do not sort
+            "drivers/regulator/renesas-slg5bright.c",
         ],
         deps = [
             # do not sort

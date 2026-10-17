@@ -184,7 +184,7 @@ static void qcom_msi_unmask_irq(struct irq_data *data)
 }
 
 static struct irq_chip qcom_msi_irq_chip = {
-	.name		= "qcom_pci_msi",
+	.name		= "gic_qcom_pci_msi",
 	.irq_enable	= qcom_msi_unmask_irq,
 	.irq_disable	= qcom_msi_mask_irq,
 	.irq_mask	= qcom_msi_mask_irq,
@@ -564,11 +564,39 @@ static void qcom_pcie_ecam_shutdown(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	int ret;
+	int initial_usage_count = atomic_read(&dev->power.usage_count);
+
+	/*
+	 * Check if kernel's device_shutdown() increased usage_count before
+	 * calling this driver shutdown function during 'adb reboot'
+	 * If device_shutdown() got a reference (initial_usage_count = 2)
+	 * We need to release the kernel's reference to ensure complete power down
+	 */
+	if (initial_usage_count == 2) {
+		/*
+		 * First release kernel's reference to get back to normal state
+		 * This prevents suspend from failing due to extra reference
+		 */
+		pm_runtime_put_noidle(dev);
+	}
+
+	/*
+	 * Enable ignore children flag to allow PCIe controller suspend
+	 * even when PCIe child devices are active during shutdown.
+	 * This is safe during shutdown as the system is going down anyway.
+	 */
+	pm_suspend_ignore_children(dev, true);
 
 	/* Put PCIe into D3cold to avoid any access while rebooting device */
 	ret = qcom_pcie_ecam_suspend(dev);
 	if (ret)
 		dev_err(dev, "fail to shutdown pcie controller: %d\n", ret);
+
+	/*
+	 * Restore ignore children flag to default state (though system is shutting down)
+	 * This is good practice for code clarity
+	 */
+	pm_suspend_ignore_children(dev, false);
 }
 
 static int qcom_pcie_ecam_probe(struct platform_device *pdev)

@@ -1,11 +1,11 @@
 load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
 load("@bazel_skylib//rules:write_file.bzl", "write_file")
-load(":kleaf-scripts/msm_kernel_extensions.bzl", "define_extras", "get_gki_ramdisk_prebuilt_binary", "get_vendor_ramdisk_binaries")
-load("//build/bazel_common_rules/dist:dist.bzl", "copy_to_dist_dir")
+load(":kleaf-scripts/msm_kernel_extensions.bzl", "define_extras", "export_init_boot_prebuilt", "get_vendor_ramdisk_binaries")
 load("//build/kernel/kleaf:hermetic_tools.bzl", "hermetic_genrule")
 load(
     "//build/kernel/kleaf:kernel.bzl",
     "ddk_headers",
+    "dtbo",
     "kernel_build_config",
     "kernel_images",
     "merged_kernel_uapi_headers",
@@ -19,8 +19,13 @@ load(":kleaf-scripts/dtbs.bzl", "define_qcom_dtbs")
 load(":kleaf-scripts/modules_unprotected.bzl", "get_unprotected_vendor_modules_list")
 load(":kleaf-scripts/msm_dtc.bzl", "define_dtc_dist")
 load(":kleaf-scripts/techpack_modules.bzl", "define_techpack_modules")
+load(":kleaf-scripts/techpack_uapi_headers.bzl", "define_techpack_uapi_headers")
+load("//vendor/oneplus/sm8850-modules/oplus/bazel:oplus_modules.bzl", "define_oplus_ddk_modules")
+load(":qcom_libraries.bzl", "library_registry")
 load(":qcom_modules.bzl", "registry")
-load("//build/kernel/oplus:oplus_modules.bzl", "define_oplus_ddk_modules")
+load("//common:modules.bzl", "get_gki_modules_list")
+load("@rules_pkg//pkg:install.bzl", "pkg_install")
+load("@rules_pkg//pkg:mappings.bzl", "pkg_files", "strip_prefix")
 
 def define_common_android_rules():
     write_file(
@@ -28,7 +33,7 @@ def define_common_android_rules():
         out = "la.image.config",
         content = [
             "KERNEL_DIR=common",
-            "SOC_DIR=soc-repo",
+            "SOC_DIR={}".format(native.package_name()),
             "KERNEL_BINARY=Image",
             "DO_NOT_STRIP_MODULES=0",
             "",
@@ -55,8 +60,36 @@ def define_single_android_build(
         dtb_target = None,
         ddk_config_deps = None,
         implicit_config_fragment = None,
-        config_path = None):
+        config_path = None,
+        module_lists_name = None):
     stem = "{}_{}".format(name, variant)
+    module_lists_name = module_lists_name or name
+
+    library_targets = library_registry.define_libraries(
+        target_variant = stem,
+        config_fragment = config_fragment,
+        base_kernel = base_kernel,
+        ddk_config_deps = ddk_config_deps,
+        implicit_config_fragment = implicit_config_fragment,
+        config_path = config_path,
+    )
+
+    library_names = {}
+    for t in library_targets:
+        if t.startswith(stem + "_"):
+            logical = t[len(stem) + 1:]
+            library_names[logical] = t
+        else:
+            parts = t.split("/", 1)
+            if len(parts) > 1:
+                library_names[parts[1]] = t
+            else:
+                fail("Library target {} does not match stem {}_".format(t, stem))
+
+    # Use the same external modules for installation and distribution.
+    external_modules = define_oplus_ddk_modules(stem, name, variant)
+    external_modules += define_techpack_modules(stem, name, variant)
+
     modules = registry.define_modules(
         stem,
         config_fragment,
@@ -64,6 +97,8 @@ def define_single_android_build(
         ddk_config_deps,
         implicit_config_fragment,
         config_path = config_path,
+        library_names = library_names,
+        extra_install_modules = external_modules,
     )
 
     hermetic_genrule(
@@ -78,8 +113,31 @@ def define_single_android_build(
         """.format(mod_list = " ".join(modules)),
     )
 
+    hermetic_genrule(
+        name = "{}_system_dlkm_modules_load_filtered".format(stem),
+        srcs = [
+            "{}_images".format(base_kernel),
+            ":{}_vendor_dlkm_modules_list_generated".format(stem),
+        ],
+        outs = ["{}/system_dlkm.modules.load".format(stem)],
+        cmd = """
+          for file in $(SRCS); do
+            case "$$file" in
+              */system_dlkm.modules.load)
+                while IFS= read -r module; do
+                  module_name="$${{module##*/}}"
+                  if ! grep -qxF "$$module_name" "$(location :{stem}_vendor_dlkm_modules_list_generated)"; then
+                    echo "$$module"
+                  fi
+                done < "$$file"
+                ;;
+            esac
+          done > "$@"
+        """.format(stem = stem),
+    )
+
     if dtb_target:
-        dtb_list, dtbo_list = define_qcom_dtbs(
+        dtb_list, dtbo_list, custom_dtbo_img_list = define_qcom_dtbs(
             stem = stem,
             target = dtb_target,
             defconfig = "//common:arch/arm64/configs/gki_defconfig",
@@ -88,6 +146,7 @@ def define_single_android_build(
     else:
         dtb_list = None
         dtbo_list = None
+        custom_dtbo_img_list = []
 
     native.alias(
         name = "{}_abl".format(stem),
@@ -130,7 +189,7 @@ def define_single_android_build(
 
     copy_file(
         name = "{}_system_dlkm_blocklist".format(stem),
-        src = "modules-lists/modules.systemdlkm_blocklist.msm.{}".format(name),
+        src = "modules-lists/modules.systemdlkm_blocklist.msm.{}".format(module_lists_name),
         out = "{}/system_dlkm.modules.blocklist".format(stem),
     )
 
@@ -140,22 +199,25 @@ def define_single_android_build(
         kernel_build = "{}_dtb_build".format(stem),
         base_kernel_images = "{}_images".format(base_kernel),
         dtbo_srcs = [":{}_dtb_build/{}".format(stem, dtbo) for dtbo in dtbo_list] if dtbo_list else None,
-        gki_ramdisk_prebuilt_binary = get_gki_ramdisk_prebuilt_binary(),
+        dtbo_config = select({
+            ":dtbo_config_unset": None,
+            "//conditions:default": ":dtbo_config",
+        }),
         build_vendor_boot = True,
         build_vendor_kernel_boot = False,
         build_initramfs = True,
         build_dtbo = True,
         build_vendor_dlkm = True,
         dedup_dlkm_modules = True,  # removes system_dlkm modules from vendor_dlkm
-        modules_list = "modules-lists/modules.list.msm.{}".format(name),
+        modules_list = "modules-lists/modules.list.msm.{}".format(module_lists_name),
         vendor_dlkm_modules_list = ":{}_vendor_dlkm_modules_list_generated".format(stem),
-        system_dlkm_modules_blocklist = "modules-lists/modules.systemdlkm_blocklist.msm.{}".format(name),
-        vendor_dlkm_modules_blocklist = "modules-lists/modules.vendor_blocklist.msm.{}".format(name),
+        system_dlkm_modules_blocklist = "modules-lists/modules.systemdlkm_blocklist.msm.{}".format(module_lists_name),
+        vendor_dlkm_modules_blocklist = "modules-lists/modules.vendor_blocklist.msm.{}".format(module_lists_name),
         vendor_ramdisk_binaries = get_vendor_ramdisk_binaries(stem),
         deps = [
-            "modules-lists/modules.list.msm.{}".format(name),
-            "modules-lists/modules.vendor_blocklist.msm.{}".format(name),
-            "modules-lists/modules.systemdlkm_blocklist.msm.{}".format(name),
+            "modules-lists/modules.list.msm.{}".format(module_lists_name),
+            "modules-lists/modules.vendor_blocklist.msm.{}".format(module_lists_name),
+            "modules-lists/modules.systemdlkm_blocklist.msm.{}".format(module_lists_name),
         ],
     )
 
@@ -165,9 +227,8 @@ def define_single_android_build(
         avbtool = "//prebuilts/kernel-build-tools:avbtool",
         key = "//tools/mkbootimg:gki/testdata/testkey_rsa4096.pem",
         props = [
-            "com.android.build.boot.os_version:16",
-            "com.android.build.boot.fingerprint:qti/canoe/canoe:16/BP2A.250605.015/1780323679878:user/release-keys",
-            "com.android.build.boot.security_patch:2026-06-01",
+            "com.android.build.boot.os_version:13",
+            "com.android.build.boot.security_patch:2023-05-05",
         ],
         boot_partition_size = build_img_opts.boot_partition_size,
     )
@@ -197,13 +258,18 @@ def define_single_android_build(
         out = "super_unsparsed.img",
     )
 
+    techpack_uapi_headers = define_techpack_uapi_headers(
+        stem = stem,
+        kernel_build = base_kernel,
+    )
+
     hermetic_genrule(
         name = "{}_merge_msm_uapi_headers".format(stem),
         srcs = [
             # do not sort
             ":{}_merged_kernel_uapi_headers".format(stem),
             "msm_uapi_headers",
-        ],
+        ] + techpack_uapi_headers,
         outs = ["{}_kernel-uapi-headers.tar.gz".format(stem)],
         cmd = """
             mkdir -p intermediate_dir
@@ -214,6 +280,26 @@ def define_single_android_build(
             tar czf $(OUTS) -C intermediate_dir usr/
             rm -rf intermediate_dir
         """,
+    )
+
+    # Header consumers expect this basename from the standalone dist target.
+    copy_file(
+        name = "{}_uapi_headers".format(stem),
+        src = ":{}_merge_msm_uapi_headers".format(stem),
+        out = "{}/uapi_headers/kernel-uapi-headers.tar.gz".format(stem),
+    )
+
+    pkg_files(
+        name = "{}_uapi_headers_dist_files".format(stem),
+        srcs = [":{}_uapi_headers".format(stem)],
+        visibility = ["//visibility:private"],
+        strip_prefix = strip_prefix.files_only(),
+    )
+
+    pkg_install(
+        name = "{}_uapi_headers_dist".format(stem),
+        srcs = [":{}_uapi_headers_dist_files".format(stem)],
+        destdir = "out/msm-kernel-{}-{}/dist".format(name, variant),
     )
 
     merged_kernel_uapi_headers(
@@ -240,13 +326,45 @@ def define_single_android_build(
         """,
     )
 
+    for dtbo_img in custom_dtbo_img_list:
+        dtbo(
+            name = "{}_{}_dtbo_image".format(stem, dtbo_img["name"]),
+            srcs = [":{}_dtb_build/{}".format(stem, dtbo) for dtbo in dtbo_img["src"]] if dtbo_img["src"] else None,
+            out = "{}/{}_dtbo.img".format(stem, dtbo_img["name"]),
+            config_file = dtbo_img["config_file"],
+            kernel_build = "{}_dtb_build".format(stem),
+            tool = "mkdtboimg",
+        )
+
+    # {stem}_avb_sign_boot_image distributes the GKI artifacts, as it replaces
+    # the unsigned boot.img of {base}_gki_artifacts.
+    #
+    # The GKI images target also ships system_dlkm.modules.load and
+    # system_dlkm.modules.blocklist, which the msm build replaces in the dist
+    # dir. pkg_files takes only one source per file and none of its files can
+    # be addressed on their own, so pick the images out of it.
+    gki_system_dlkm_images = []
+    for img in [
+        # do not sort
+        "system_dlkm.erofs.img",
+        "system_dlkm.ext4.img",
+        "system_dlkm.flatten.erofs.img",
+        "system_dlkm.flatten.ext4.img",
+    ]:
+        img_name = "{}_gki_{}".format(stem, img.replace(".", "_"))
+        native.filegroup(
+            name = img_name,
+            srcs = ["{}_images".format(base_kernel)],
+            output_group = img,
+        )
+        gki_system_dlkm_images.append(":{}".format(img_name))
+
     dist_data = [
-        "{}_gki_artifacts".format(base_kernel),
-        "{}".format(base_kernel),
+        "{}_modules".format(base_kernel),
         ":{}_modules_install".format(stem),
         "{}_dtb_build".format(stem),
         ":{}_images".format(stem),
-        "{}_images".format(base_kernel),
+        ":{}_system_dlkm_modules_load_filtered".format(stem),
         "{}_super_image".format(stem),
         "{}_unsparsed_image".format(stem),
         "{}_avb_sign_boot_image".format(stem),
@@ -254,9 +372,23 @@ def define_single_android_build(
         "{}_dtb_build_config".format(stem),
         "{}_tar_kernel_headers".format(stem),
         "{}_system_dlkm_blocklist".format(stem),
-    ] + [
-        ":{}/{}".format(stem, module)
-        for module in modules
+    ] + gki_system_dlkm_images + [
+        ":{}_{}_dtbo_image".format(stem, dtbo_img["name"])
+        for dtbo_img in custom_dtbo_img_list
+    ]
+
+    # pkg_files rejects two sources landing on the same file in the flat dist
+    # dir, which copy_to_dist_dir used to allow. Drop the GKI copy of every
+    # module the msm tree rebuilds, keeping the msm one as before.
+    msm_module_kos = {"{}.ko".format(module.split("/")[-1]): None for module in modules}
+
+    # ":msm_kernel_build" is a label_flag and has no per module targets to
+    # exclude, so refer to the kernel build it points at.
+    gki_kernel_build = "//common:kernel_aarch64" if base_kernel == ":msm_kernel_build" else base_kernel
+    gki_module_excludes = [
+        "{}/{}".format(gki_kernel_build, gki_module)
+        for gki_module in get_gki_modules_list("arm64")
+        if gki_module.split("/")[-1] in msm_module_kos
     ]
 
     vendor_dlkm_module_unprotected_list = get_unprotected_vendor_modules_list(stem)
@@ -280,32 +412,27 @@ def define_single_android_build(
         if board_bc_extras:
             dist_data.append("{}_extra_bootconfig".format(stem))
 
-    copy_to_dist_dir(
+    pkg_files(
+        name = "{}_dist_files".format(stem),
+        srcs = dist_data,
+        excludes = gki_module_excludes,
+        visibility = ["//visibility:private"],
+        strip_prefix = strip_prefix.files_only(),
+    )
+
+    pkg_install(
         name = "{}_dist".format(stem),
-        data = dist_data,
-        dist_dir = "out/msm-kernel-{}-{}/dist".format(name, variant),
-        flat = True,
-        log = "info",
-        allow_duplicate_filenames = True,
-        mode_overrides = {
-            # do not sort
-            "**/*.elf": "755",
-            "**/vmlinux": "755",
-            "**/Image": "755",
-            "**/*.dtb*": "755",
-            "**/LinuxLoader*": "755",
-            "**/*": "644",
-        },
+        srcs = [":{}_dist_files".format(stem)],
+        destdir = "out/msm-kernel-{}-{}/dist".format(name, variant),
     )
 
     define_abl_dist(stem, name, variant)
 
     define_dtc_dist(stem, name, variant)
 
-    define_techpack_modules(stem, name, variant)
-    define_oplus_ddk_modules(stem, name, variant)
-
     define_extras(stem, kbuild_config = base_kernel)
+
+    export_init_boot_prebuilt(name, variant)
 
 def define_android_build(
         name,
@@ -370,7 +497,7 @@ def define_typical_android_build(
             } | perf_kwargs,
             "consolidate": {
                 "config_fragment": consolidate_config,
-                "base_kernel": "//soc-repo:kernel_aarch64_consolidate",
+                "base_kernel": ":kernel_aarch64_consolidate",
                 "build_img_opts": consolidate_build_img_opts,
                 "ddk_config_deps": [common_info],
                 "implicit_config_fragment": perf_config,

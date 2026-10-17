@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (c) 2014, The Linux Foundation. All rights reserved.
- * Copyright (c) 2023-2025 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  */
 
 #include <linux/acpi.h>
@@ -199,11 +199,12 @@ static inline void etm4_os_unlock_csa(struct etmv4_drvdata *drvdata,
 	drvdata->os_unlock = true;
 }
 
-static void etm4_os_unlock(struct etmv4_drvdata *drvdata)
+void etm4_os_unlock(struct etmv4_drvdata *drvdata)
 {
 	if (!WARN_ON(!drvdata->csdev))
 		etm4_os_unlock_csa(drvdata, &drvdata->csdev->access);
 }
+EXPORT_SYMBOL_GPL(etm4_os_unlock);
 
 static void etm4_os_lock(struct etmv4_drvdata *drvdata)
 {
@@ -889,6 +890,7 @@ static void etm4_disable_hw(void *info)
 	int i;
 
 	etm4_cs_unlock(drvdata, csa);
+	etm4_os_unlock(drvdata);
 	etm4_disable_arch_specific(drvdata);
 
 	if (!drvdata->skip_power_up) {
@@ -1849,6 +1851,9 @@ static int etm4_cpu_save(struct etmv4_drvdata *drvdata)
 {
 	int ret = 0;
 
+	if (pm_save_enable != PARAM_PM_SAVE_SELF_HOSTED)
+		return 0;
+
 	/* Save the TRFCR irrespective of whether the ETM is ON */
 	if (drvdata->trfcr)
 		drvdata->save_trfcr = read_trfcr();
@@ -1963,6 +1968,9 @@ static void __etm4_cpu_restore(struct etmv4_drvdata *drvdata)
 
 static void etm4_cpu_restore(struct etmv4_drvdata *drvdata)
 {
+	if (pm_save_enable != PARAM_PM_SAVE_SELF_HOSTED)
+		return;
+
 	if (drvdata->trfcr)
 		write_trfcr(drvdata->save_trfcr);
 	if (drvdata->state_needs_restore)
@@ -2278,7 +2286,7 @@ static int etm_suspend(struct device *dev)
 {
 	struct etmv4_drvdata *drvdata = dev_get_drvdata(dev);
 
-	if (pm_suspend_via_firmware())
+	if (pm_suspend_target_state == PM_SUSPEND_MEM)
 		coresight_disable_sysfs(drvdata->csdev);
 
 	return 0;

@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2020-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  */
 
 #ifndef _QCOM_SYSTEM_HEAP_H
@@ -12,20 +12,10 @@
 #include "qcom_sg_ops.h"
 #include "qcom_dynamic_page_pool.h"
 #include "qcom_sg_ops.h"
-#if IS_ENABLED(CONFIG_OPLUS_FEATURE_AIZEROCOPY)
-#include "aizerofs/aizerofs_shrink.h"
-#endif
-
-#ifdef CONFIG_OPLUS_FEATURE_MM_BOOSTPOOL
-#include "mm_boost_pool/oplus_boost_pool.h"
-#endif
 
 struct qcom_system_heap {
 	int uncached;
 	struct dynamic_page_pool **pool_list;
-#ifdef CONFIG_OPLUS_FEATURE_MM_BOOSTPOOL
-	struct dynamic_boost_pool *boost_pool;
-#endif
 };
 
 #ifdef CONFIG_QCOM_DMABUF_HEAPS_SYSTEM
@@ -34,15 +24,12 @@ void qcom_system_heap_free(struct qcom_sg_buffer *buffer);
 struct page *qcom_sys_heap_alloc_largest_available(struct dynamic_page_pool **pools,
 						   unsigned long size,
 						   unsigned int max_order,
-						   bool movable);
+						   bool movable,
+						   bool alloc_reclaim);
 int system_qcom_sg_buffer_alloc(struct dma_heap *heap,
 				struct qcom_sg_buffer *buffer,
 				unsigned long len,
-				bool movable
-#if IS_ENABLED(CONFIG_OPLUS_FEATURE_AIZEROCOPY)
-				,struct aizerofs_dma_buf_cache *dbuf_cache
-#endif
-				);
+				bool movable);
 enum zone_type dynamic_pool_gfp_zone(gfp_t flags);
 
 bool dynamic_pool_zone_watermark_ok_safe(struct zone *z, unsigned int order,
@@ -60,18 +47,15 @@ static inline void qcom_system_heap_free(struct qcom_sg_buffer *buffer)
 static inline struct page *qcom_sys_heap_alloc_largest_available(struct dynamic_page_pool **pools,
 								 unsigned long size,
 								 unsigned int max_order,
-								 bool movable)
+								 bool movable,
+								 bool alloc_reclaim)
 {
 	return ERR_PTR(-EOPNOTSUPP);
 }
 static inline int system_qcom_sg_buffer_alloc(struct dma_heap *heap,
 					      struct qcom_sg_buffer *buffer,
 					      unsigned long len,
-					      bool movable
-#if IS_ENABLED(CONFIG_OPLUS_FEATURE_AIZEROCOPY)
-					      ,struct aizerofs_dma_buf_cache *dbuf_cache
-#endif
-				)
+					      bool movable)
 {
 	return -EOPNOTSUPP;
 }

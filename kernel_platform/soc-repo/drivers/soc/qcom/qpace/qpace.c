@@ -15,11 +15,16 @@
 #include <linux/interconnect.h>
 #include <linux/of.h>
 #include <linux/of_device.h>
+#include <linux/iopoll.h>
+#include <linux/suspend.h>
 #include <dt-bindings/interconnect/qcom,icc.h>
 
 #include "qpace-constants.h"
 #include "qpace-reg-accessors.h"
 #include "qpace.h"
+
+#define CREATE_TRACE_POINTS
+#include <trace/events/qpace.h>
 
 #define QPACE_REG_PAGE_SIZE (1 << 12)
 
@@ -86,9 +91,12 @@ static void __iomem *qpace_gen_cmd_regs;
 #define QPACE_READ_GEN_CMD_REG(offset) readl(qpace_gen_cmd_regs + offset)
 #define QPACE_WRITE_GEN_CMD_REG(offset, val) writel(val, qpace_gen_cmd_regs + offset)
 
+static bool qpace_suspended;
 static struct icc_path *qpace_interconnect;
 static struct device *qpace_dev;
 static struct dev_pm_qos_request qos_req;
+DEFINE_STATIC_KEY_FALSE(qpace_drv_probed);
+EXPORT_SYMBOL_GPL(qpace_drv_probed);
 
 /*
  * =============================================================================
@@ -184,28 +192,28 @@ static inline u32 qpace_urgent_command_trigger(phys_addr_t input_addr,
 			       QPACE_URG_CMD_0_TD_DST_ADDR_L_CFG_CNTXT_OFFSET;
 	u64 urg_addr_field_lower, urg_addr_field_upper;
 	u32 stat_reg;
+	unsigned long ret;
 
 	urg_addr_field_lower = FIELD_PREP(URG_CMD_0_TD_DST_ADDR_L__CMD_CFG_CNTXT,
-	command);
+					command);
 	urg_addr_field_lower |= GENMASK(63, 8) & output_addr;
 
 	urg_addr_field_upper = input_addr;
 
 	/* Ensure that preceding stores that QPaCE will depend on are done executing */
-	mb();
+	dma_wmb();
 
 	asm volatile(
 	"stp %0, %1, [%2]\n"
 	: : "r" (urg_addr_field_lower), "r" (urg_addr_field_upper), "r" (td_dst_src_reg)
 	: "memory");
 
-	stat_reg = QPACE_READ_URG_CMD_REG(urg_reg_num,
-					  QPACE_URG_CMD_0_ED_STAT_OFFSET);
-
-	/* Wait for operation to finish */
-	while (FIELD_GET(URG_CMD_0_ED_STAT_COMP_CODE, stat_reg) == OP_URG_ONGOING)
-		stat_reg = QPACE_READ_URG_CMD_REG(urg_reg_num,
-						  QPACE_URG_CMD_0_ED_STAT_OFFSET);
+	ret = read_poll_timeout_atomic(QPACE_READ_URG_CMD_REG, stat_reg,
+		FIELD_GET(URG_CMD_0_ED_STAT_COMP_CODE, stat_reg) != OP_URG_ONGOING, 1,
+		100 * USEC_PER_MSEC, false, urg_reg_num, QPACE_URG_CMD_0_ED_STAT_OFFSET);
+	/* Return -ETIMEDOUT on timeout */
+	if (ret)
+		panic("QPace urgent cmd timeout\n");
 
 	return stat_reg;
 }
@@ -263,6 +271,9 @@ int qpace_urgent_decompress(phys_addr_t input_addr,
 	int urg_reg_num;
 	u32 stat_reg, stat_reg_val;
 
+	trace_start_qpace_urgent_decompress((void *) input_addr,
+		(void *) output_addr, input_size);
+
 	urg_reg_num = get_cpu();
 	stat_reg = qpace_urgent_command_trigger(input_addr, output_addr, urg_reg_num,
 						URG_DECOMP_CNTXT);
@@ -272,8 +283,15 @@ int qpace_urgent_decompress(phys_addr_t input_addr,
 	if (stat_reg_val != OP_OK) {
 		pr_err("%s: register %d failed with %u\n",
 		       __func__, urg_reg_num, stat_reg_val);
+
+		trace_end_qpace_urgent_decompress((void *) input_addr,
+			(void *) output_addr, input_size, stat_reg_val);
+
 		return -EINVAL;
 	}
+
+	trace_end_qpace_urgent_decompress((void *) input_addr,
+		(void *) output_addr, input_size, stat_reg_val);
 
 	return FIELD_GET(URG_CMD_0_ED_STAT_SIZE, stat_reg);
 }
@@ -553,12 +571,20 @@ EXPORT_SYMBOL_GPL(put_qpace);
  * @ring_num if it has not been initialized already for the current usage
  * period. This function implicitly increments a reference counter that
  * tracks the number of items in the ring.
+ *
+ * Returns 0 if successful, -EINVAL if qpace is suspended.
  */
-static void get_ring(int ring_num)
+static int get_ring(int ring_num)
 {
 	struct transfer_ring *tr = &tr_rings[ring_num];
 
+	/* protect active_rings and qpace_suspended */
 	mutex_lock(&qpace_ref_lock);
+
+	if (qpace_suspended) {
+		mutex_unlock(&qpace_ref_lock);
+		return -EBUSY;
+	}
 
 	if (!tr->item_count) {
 		_get_qpace();
@@ -572,6 +598,7 @@ static void get_ring(int ring_num)
 	tr->item_count++;
 
 	mutex_unlock(&qpace_ref_lock);
+	return 0;
 }
 
 /*
@@ -626,7 +653,9 @@ int qpace_queue_copy(int tr_num, phys_addr_t src_addr, phys_addr_t dst_addr, siz
 	struct qpace_transfer_descriptor *td;
 	int ret;
 
-	get_ring(tr_num);
+	ret = get_ring(tr_num);
+	if (ret)
+		return ret;
 
 	td = ring->hw_write_ptr;
 
@@ -666,7 +695,9 @@ int qpace_queue_compress(int tr_num, phys_addr_t src_addr, phys_addr_t dst_addr)
 	struct qpace_transfer_descriptor *td;
 	int ret;
 
-	get_ring(tr_num);
+	ret = get_ring(tr_num);
+	if (ret)
+		return ret;
 
 	td = ring->hw_write_ptr;
 
@@ -693,6 +724,21 @@ int qpace_queue_compress(int tr_num, phys_addr_t src_addr, phys_addr_t dst_addr)
 	return ret;
 }
 EXPORT_SYMBOL_GPL(qpace_queue_compress);
+
+/*
+ * OP_BUS_ERROR and OP_TIMED_OUT should be critial error.
+ * OP_COMP_TOO_BIG is not an error. We're settign threshold size to (PAGE_SIZE-1).
+ * This typically occurs if the page is completely uncompressible. The logic then
+ * goes to huge_class_size case, which is fine.
+ */
+bool qpace_check_compress_err(struct qpace_event_descriptor *ed)
+{
+	if (ed->completion_code & (OP_BUS_ERROR | OP_TIMED_OUT))
+		return true;
+	else
+		return false;
+}
+EXPORT_SYMBOL_GPL(qpace_check_compress_err);
 
 static inline void qpace_free_tr_entries(int tr_num, int n_consumed_entries)
 {
@@ -722,10 +768,10 @@ static inline bool transfer_ring_is_empty(struct transfer_ring *ring)
  * This boils down to updating a HW register that points to the end of the valid
  * in the ring buffer.
  *
- * Return: true if the ring had items to submit / submission was done, false if
- * the ring had no items to submit.
+ * Return: positive for the requests number that submitted to HW, 0 if the ring had
+ * no items to submit.
  */
-bool qpace_trigger_tr(int tr_num)
+size_t qpace_trigger_tr(int tr_num)
 {
 	struct transfer_ring *ring = &tr_rings[tr_num];
 	struct qpace_transfer_descriptor *last_processed_td;
@@ -734,7 +780,7 @@ bool qpace_trigger_tr(int tr_num)
 
 	/* bail if ring is empty */
 	if (transfer_ring_is_empty(ring))
-		return false;
+		return 0;
 
 	if (ring->hw_write_ptr == ring->ring_buffer_start)
 		last_processed_td = ring->ring_buffer_start + DESCRIPTORS_PER_RING - 1;
@@ -752,41 +798,80 @@ bool qpace_trigger_tr(int tr_num)
 	QPACE_WRITE_TR_REG(tr_num, QPACE_DMA_TR_MGR_0_WR_PTR_L_OFFSET,
 			   FIELD_GET(GENMASK(31, 0), write_ptr_addr));
 
-	return true;
+	return ring->item_count;
 }
 EXPORT_SYMBOL_GPL(qpace_trigger_tr);
 
+static inline bool read_last_cycle_bit(struct qpace_event_descriptor *ed)
+{
+	return FIELD_GET(CYCLE_BIT_MASK, READ_ONCE(ed->flags));
+}
 /*
  * qpace_wait_for_tr_consumption() - Wait for event completion interrupt for @tr_num
  * @tr_num: Transfer ring to have qpace take submissions from for processing
+ * @nr_trigger: requests triggered in one batch
  * @no_sleep: If true, poll on the relevant completion event, go to sleep otherwise.
  *
  * Wait for there to be a completion event for the event ring corresponding to the
  * transfer ring @tr_num. Can be sleeping or non-sleeping based on @no_sleep.
  */
-void qpace_wait_for_tr_consumption(int tr_num, bool no_sleep)
+void qpace_wait_for_tr_consumption(int tr_num, size_t nr_trigger, bool no_sleep)
 {
 	struct event_ring *ev_ring = &ev_rings[tr_num];
-	struct qpace_event_descriptor *first_ed_to_consume;
+	struct qpace_event_descriptor *last_ed_to_consume;
+	unsigned long ret;
+	bool last_cycle_bit, val;
+	/* single core: 0.52 GB/s @ SVS -> 7.69us/page */
+	unsigned long timeout_us = 100 * USEC_PER_MSEC;
+	size_t offset;
 
-	if (ev_ring->hw_read_ptr == ev_ring->ring_buffer_start + DESCRIPTORS_PER_RING - 1)
-		first_ed_to_consume = ev_ring->ring_buffer_start;
-	else
-		first_ed_to_consume = ev_ring->hw_read_ptr + 1;
+	/* Validate nr_trigger to prevent underflow */
+	if (WARN_ON_ONCE(nr_trigger == 0 || nr_trigger > DESCRIPTORS_PER_RING)) {
+		pr_err("QPACE: Invalid nr_trigger=%zx\n", nr_trigger);
+		return;
+	}
 
-retry:
-	if (no_sleep)
-		while (!try_wait_for_completion(&ev_rings[tr_num].ring_has_events))
-			udelay(1);
-	else
-		wait_for_completion(&ev_rings[tr_num].ring_has_events);
+	if (!no_sleep) {
+		/* Returns 0 on timeout */
+		ret = wait_for_completion_timeout(&ev_rings[tr_num].ring_has_events,
+						usecs_to_jiffies(timeout_us));
+		if (!ret)
+			pr_err("QPACE: Timeout, fallback to poll\n");
+	} else {
+		/* Return -ETIMEDOUT on timeout */
+		ret = read_poll_timeout_atomic(try_wait_for_completion,
+				val, val, 1, timeout_us, false,
+				&ev_rings[tr_num].ring_has_events);
+		if (ret)
+			pr_err("QPACE: Timeout, fallback to poll\n");
+	}
 
 	/*
-	 * Check the first ed to consume to see if it has been created yet. If not,
+	 * calculate last ed to consume from triggered requests from
+	 * last time qpace_trigger_tr
+	 */
+	offset = ev_ring->hw_write_ptr - ev_ring->ring_buffer_start;
+	offset += nr_trigger - 1;
+
+	if (offset > DESCRIPTORS_PER_RING - 1) {
+		last_cycle_bit = !ev_ring->cycle_bit;
+		last_ed_to_consume = ev_ring->ring_buffer_start + offset -
+					DESCRIPTORS_PER_RING;
+	} else {
+		last_cycle_bit = ev_ring->cycle_bit;
+		last_ed_to_consume = ev_ring->ring_buffer_start + offset;
+	}
+	pr_debug("nr_trigger: %zx last_offset: %zx  cycle_bit: %x\n",
+			nr_trigger, offset, last_cycle_bit);
+
+	/*
+	 * Check the last_ed_to_consume to see if it has been created yet. If not,
 	 * treat the interrupt as spurious and wait for another one.
 	 */
-	if (first_ed_to_consume->cycle_bit != ev_ring->cycle_bit)
-		goto retry;
+	ret = read_poll_timeout(read_last_cycle_bit, val, val == last_cycle_bit,
+			8, timeout_us, false, last_ed_to_consume);
+	if (ret)
+		panic("QPACE: Timeout of polling ed cycle_bit, panic\n");
 }
 EXPORT_SYMBOL_GPL(qpace_wait_for_tr_consumption);
 
@@ -1229,6 +1314,9 @@ static int qpace_probe(struct platform_device *pdev)
 		goto power_off;
 
 	qpace_dev = dev;
+	/*  initialization has been completed before other CPUs observe qpace_drv_probed */
+	smp_mb();
+	static_branch_enable(&qpace_drv_probed);
 
 	return ret;
 
@@ -1250,12 +1338,52 @@ static const struct of_device_id qpace_match_table[] = {
 	{},
 };
 
+
+static int qpace_suspend(struct device *dev)
+{
+	mutex_lock(&qpace_ref_lock);
+
+	/* Set suspended flag first to prevent new submissions */
+	qpace_suspended = true;
+	/* Ensure flag is visible before checking queues */
+	smp_wmb();
+
+	if (active_rings) {
+		/* new requests queued during suspend */
+		dev_err(dev, "active_rings not 0, abort suspend\n");
+		qpace_suspended = false;
+		mutex_unlock(&qpace_ref_lock);
+		return -EBUSY;
+	}
+
+	mutex_unlock(&qpace_ref_lock);
+	return 0;
+}
+
+static int qpace_resume(struct device *dev)
+{
+	mutex_lock(&qpace_ref_lock);
+
+	if (active_rings)
+		dev_err(dev, "active_rings not 0, unexpected case\n");
+
+	qpace_suspended = false;
+	mutex_unlock(&qpace_ref_lock);
+	return 0;
+}
+
+const struct dev_pm_ops qpace_pm_ops = {
+	.suspend = qpace_suspend,
+	.resume = qpace_resume,
+};
+
 static struct platform_driver qpace_driver = {
 	.probe = qpace_probe,
 	.remove = qpace_remove,
 	.driver = {
 		.name = "qcom-qpace",
 		.of_match_table = qpace_match_table,
+		.pm = &qpace_pm_ops,
 	},
 };
 

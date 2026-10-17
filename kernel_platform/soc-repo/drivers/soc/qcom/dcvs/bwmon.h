@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2014-2020, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2025 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  */
 
 #ifndef _QCOM_BWMON_H
@@ -116,6 +116,8 @@ struct hwmon_node {
 	u32			hw_max_freq;
 	u32			min_freq;
 	u32			max_freq;
+	u32			max_freq_max_mbps;
+	bool			bypass_max_freq;
 	struct dcvs_freq	cur_freqs[2];
 	u32			window_ms;
 	unsigned int		guard_band_mbps;
@@ -165,9 +167,6 @@ struct hwmon_node {
 	struct kobject		kobj;
 	struct mutex		mon_lock;
 	struct mutex		update_lock;
-#if IS_ENABLED(CONFIG_OPLUS_FEATURE_GEAS_FDRIVE)
-	struct hwmon_node_ext	geas_frame_bw;
-#endif
 };
 
 /* BWMON register offsets */

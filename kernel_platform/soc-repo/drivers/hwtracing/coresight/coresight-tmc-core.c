@@ -391,7 +391,7 @@ static struct attribute *coresight_tmc_mgmt_attrs[] = {
 	coresight_tmc_reg64(rrp, TMC_RRP, TMC_RRPHI),
 	coresight_tmc_reg64(rwp, TMC_RWP, TMC_RWPHI),
 	coresight_tmc_reg32(trg, TMC_TRG),
-	coresight_tmc_reg32(ctl, TMC_CTL),
+	coresight_tmc_reg32_rw(ctl, TMC_CTL),
 	coresight_tmc_reg32(ffsr, TMC_FFSR),
 	coresight_tmc_reg32_rw(ffcr, TMC_FFCR),
 	coresight_tmc_reg32(mode, TMC_MODE),

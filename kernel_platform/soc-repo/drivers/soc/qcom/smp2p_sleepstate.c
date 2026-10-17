@@ -17,8 +17,6 @@
 #define PROC_AWAKE_ID 12 /* 12th bit */
 #define AWAKE_BIT BIT(PROC_AWAKE_ID)
 
-static struct wakeup_source *notify_ws;
-
 #define QCOM_POWER_STATE_SMEM_ID	512
 #define QCOM_POWER_STATE_SHUTDOWN       0
 #define QCOM_POWER_STATE_RESUME         1
@@ -47,7 +45,14 @@ struct qcom_states {
 	struct qcom_smem_state *smem_state;
 };
 
-static struct qcom_states state;
+struct qcom_smp2p_sleepstate_private {
+	struct wakeup_source *notify_ws;
+	struct notifier_block pm_nb;
+	struct qcom_states state;
+	struct device *dev;
+	char *smp2p_label;
+	int irq;
+};
 
 /**
  * sleepstate_pm_notifier() - PM notifier callback function.
@@ -61,44 +66,49 @@ static struct qcom_states state;
 static int sleepstate_pm_notifier(struct notifier_block *nb,
 				  unsigned long event, void *unused)
 {
+	struct qcom_smp2p_sleepstate_private *priv =
+		container_of(nb, struct qcom_smp2p_sleepstate_private, pm_nb);
+
 	switch (event) {
 	case PM_SUSPEND_PREPARE:
-		if (state.power_state) {
-			state.power_state->state = QCOM_POWER_STATE_SUSPEND;
-			state.power_state->suspend_time = __arch_counter_get_cntvct();
+		if (priv->state.power_state) {
+			priv->state.power_state->state = QCOM_POWER_STATE_SUSPEND;
+			priv->state.power_state->suspend_time = __arch_counter_get_cntvct();
 
 			/* Update the power states and add a memory barrier to ensure
 			 * consistent read/write between APPS and the remote.
 			 */
 			mb();
 		}
-		qcom_smem_state_update_bits(state.smem_state, AWAKE_BIT, 0);
+		qcom_smem_state_update_bits(priv->state.smem_state, AWAKE_BIT, 0);
 		break;
 
 	case PM_POST_SUSPEND:
-		if (state.power_state) {
-			state.power_state->state = QCOM_POWER_STATE_RESUME;
-			state.power_state->resume_time = __arch_counter_get_cntvct();
+		if (priv->state.power_state) {
+			priv->state.power_state->state = QCOM_POWER_STATE_RESUME;
+			priv->state.power_state->resume_time = __arch_counter_get_cntvct();
 			/* Update the power states and add a memory barrier to ensure
 			 * consistent read/write between APPS and the remote.
 			 */
 			mb();
 		}
-		qcom_smem_state_update_bits(state.smem_state, AWAKE_BIT, AWAKE_BIT);
+		qcom_smem_state_update_bits(priv->state.smem_state, AWAKE_BIT, AWAKE_BIT);
 		break;
 	}
 
 	return NOTIFY_DONE;
 }
 
-static struct notifier_block sleepstate_pm_nb = {
-	.notifier_call = sleepstate_pm_notifier,
-	.priority = INT_MAX,
-};
-
 static irqreturn_t smp2p_sleepstate_handler(int irq, void *ctxt)
 {
-	__pm_wakeup_event(notify_ws, 200);
+	struct qcom_smp2p_sleepstate_private *priv = ctxt;
+
+	if (!priv)
+		return IRQ_HANDLED;
+
+	if (priv->notify_ws)
+		__pm_wakeup_event(priv->notify_ws, 200);
+
 	return IRQ_HANDLED;
 }
 
@@ -108,11 +118,21 @@ static int smp2p_sleepstate_probe(struct platform_device *pdev)
 	int irq;
 	struct device *dev = &pdev->dev;
 	struct device_node *node = dev->of_node;
+	struct qcom_smp2p_sleepstate_private *priv;
+	const char *label;
+	char ws_name[32];
 
-	state.smem_state = qcom_smem_state_get(&pdev->dev, 0, &ret);
-	if (IS_ERR(state.smem_state))
-		return PTR_ERR(state.smem_state);
-	qcom_smem_state_update_bits(state.smem_state, AWAKE_BIT, AWAKE_BIT);
+	priv = devm_kzalloc(&pdev->dev, sizeof(*priv), GFP_KERNEL);
+	if (!priv)
+		return -ENOMEM;
+
+	priv->dev = &pdev->dev;
+
+	priv->state.smem_state = qcom_smem_state_get(&pdev->dev, 0, &ret);
+	if (IS_ERR(priv->state.smem_state))
+		return PTR_ERR(priv->state.smem_state);
+
+	qcom_smem_state_update_bits(priv->state.smem_state, AWAKE_BIT, AWAKE_BIT);
 
 	ret = qcom_smem_alloc(QCOM_SMEM_HOST_ANY,
 			      QCOM_POWER_STATE_SMEM_ID,
@@ -121,17 +141,17 @@ static int smp2p_sleepstate_probe(struct platform_device *pdev)
 	if (ret < 0 && ret != -EEXIST) {
 		pr_err("Unable to allocate memory for power state notif err %d\n", ret);
 	} else {
-		state.power_state = qcom_smem_get(QCOM_SMEM_HOST_ANY,
+		priv->state.power_state = qcom_smem_get(QCOM_SMEM_HOST_ANY,
 						  QCOM_POWER_STATE_SMEM_ID,
 						  NULL);
-		if (IS_ERR(state.power_state)) {
-			state.power_state = NULL;
+		if (IS_ERR(priv->state.power_state)) {
+			priv->state.power_state = NULL;
 			pr_err("Unable to acquire shared memory power state notif\n");
 		} else {
-			state.power_state->version = 1;
-			state.power_state->subsystem = 0;
-			state.power_state->state = QCOM_POWER_STATE_RESUME;
-			state.power_state->resume_time = __arch_counter_get_cntvct();
+			priv->state.power_state->version = 1;
+			priv->state.power_state->subsystem = 0;
+			priv->state.power_state->state = QCOM_POWER_STATE_RESUME;
+			priv->state.power_state->resume_time = __arch_counter_get_cntvct();
 			/* Update the power states and add a memory barrier to ensure
 			 * consistent read/write between APPS and the remote.
 			 */
@@ -140,14 +160,31 @@ static int smp2p_sleepstate_probe(struct platform_device *pdev)
 		pr_info("%s: Allocated shared memory for power state notif\n", __func__);
 	}
 
-	ret = register_pm_notifier(&sleepstate_pm_nb);
+	priv->pm_nb.notifier_call = sleepstate_pm_notifier;
+	priv->pm_nb.priority = INT_MAX;
+
+	ret = register_pm_notifier(&priv->pm_nb);
 	if (ret) {
 		dev_err(dev, "%s: power state notif error %d\n", __func__, ret);
 		return ret;
 	}
 
-	notify_ws = wakeup_source_register(&pdev->dev, "smp2p-sleepstate");
-	if (!notify_ws) {
+	ret = of_property_read_string(node, "label", &label);
+	if (ret) {
+		pr_info("Failed to read label property: %d\n", ret);
+		label = dev_name(dev);
+	}
+
+	priv->smp2p_label = devm_kasprintf(&pdev->dev, GFP_KERNEL, "%s", label);
+	if (!priv->smp2p_label) {
+		ret = -ENOMEM;
+		goto err_ws;
+	}
+
+	snprintf(ws_name, sizeof(ws_name), "%s-smp2p-sleepstate", priv->smp2p_label);
+
+	priv->notify_ws = wakeup_source_register(&pdev->dev, ws_name);
+	if (!priv->notify_ws) {
 		ret = -ENOMEM;
 		goto err_ws;
 	}
@@ -158,21 +195,25 @@ static int smp2p_sleepstate_probe(struct platform_device *pdev)
 		ret = -EPROBE_DEFER;
 		goto err;
 	}
+
+	priv->irq = irq;
+
 	dev_dbg(dev, "got smp2p-sleepstate-in irq %d\n", irq);
 	ret = devm_request_threaded_irq(dev, irq, NULL,
 					smp2p_sleepstate_handler,
 					IRQF_ONESHOT | IRQF_TRIGGER_RISING |
 					IRQF_TRIGGER_FALLING | IRQF_NO_SUSPEND,
-					"smp2p_sleepstate", dev);
+					priv->smp2p_label, priv);
 	if (ret) {
 		dev_err(dev, "fail to register smp2p threaded_irq=%d\n", irq);
 		goto err;
 	}
+	platform_set_drvdata(pdev, priv);
 	return 0;
 err:
-	wakeup_source_unregister(notify_ws);
+	wakeup_source_unregister(priv->notify_ws);
 err_ws:
-	unregister_pm_notifier(&sleepstate_pm_nb);
+	unregister_pm_notifier(&priv->pm_nb);
 	return ret;
 }
 

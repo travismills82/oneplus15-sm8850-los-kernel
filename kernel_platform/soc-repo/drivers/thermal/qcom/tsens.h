@@ -31,6 +31,7 @@
 #define TSENS_FEAT_ID4		0x4
 #define TSENS_ELEVATE_DELTA	10000
 #define TSENS_ELEVATE_CPU_DELTA	5000
+#define COLD_SENSOR_HW_ID		128
 
 #define MAX_SENSORS 16
 
@@ -54,6 +55,7 @@ enum tsens_irq_type {
 	LOWER,
 	UPPER,
 	CRITICAL,
+	COLD,
 };
 
 /**
@@ -131,6 +133,9 @@ struct tsens_ops {
 	void (*disable)(struct tsens_priv *priv);
 	int (*suspend)(struct tsens_priv *priv);
 	int (*resume)(struct tsens_priv *priv);
+	int (*freeze)(struct tsens_priv *priv);
+	int (*restore)(struct tsens_priv *priv);
+	int (*get_cold_status)(const struct tsens_sensor *s, bool *cold_status);
 };
 
 #define REG_FIELD_FOR_EACH_SENSOR11(_name, _offset, _startbit, _stopbit) \
@@ -549,6 +554,7 @@ enum regfield_ids {
 	TEMP_PERSIST_MIN_TEMP,
 	TEMP_PERSIST_MIN_SENSOR_ID,
 	TEMP_PERSIST_MIN_VALID,
+	COLD_STATUS,			/* COLD interrupt status */
 
 	/* Keep last */
 	MAX_REGFIELDS
@@ -578,6 +584,7 @@ struct tsens_features {
 	unsigned int adc:1;
 	unsigned int srot_split:1;
 	unsigned int has_watchdog:1;
+	unsigned int cold_int:1;
 	unsigned int max_sensors;
 	unsigned int persist_max_min:1;
 	int trip_min_temp;
@@ -634,6 +641,7 @@ struct tsens_context {
  * @ipc_log: pointer for first ipc log context id
  * @ipc_log1: pointer for second ipc log context id
  * @sensor: list of sensors attached to this device
+ * @cold_sensor: pointer to cold sensor attached to this device
  */
 struct tsens_priv {
 	struct device			*dev;
@@ -652,12 +660,17 @@ struct tsens_priv {
 	struct tsens_features		*feat;
 	const struct reg_field		*fields;
 	const struct tsens_ops		*ops;
-
+	/* add to save irq number to re-use it at runtime */
+	int				uplow_irq;
+	int				crit_irq;
+	int                             comb_irq;
+	int				cold_irq;
 	struct dentry			*debug_root;
 	struct dentry			*debug;
 	void				*ipc_log;
 	void				*ipc_log1;
 
+	struct tsens_sensor		*cold_sensor;
 	struct tsens_sensor		sensor[] __counted_by(num_sensors);
 };
 
@@ -707,12 +720,15 @@ void compute_intercept_slope(struct tsens_priv *priv, u32 *pt1, u32 *pt2, u32 mo
 int init_common(struct tsens_priv *priv);
 int get_temp_tsens_valid(const struct tsens_sensor *s, int *temp);
 int get_temp_common(const struct tsens_sensor *s, int *temp);
+int get_cold_int_status(const struct tsens_sensor *s, bool *cold_status);
 #ifdef CONFIG_SUSPEND
 int tsens_resume_common(struct tsens_priv *priv);
 #else
 #define tsens_resume_common            NULL
 #endif
-
+int tsens_v2_tsens_suspend(struct tsens_priv *priv);
+int tsens_v2_tsens_freeze(struct tsens_priv *priv);
+int tsens_v2_tsens_restore(struct tsens_priv *priv);
 /* TSENS target */
 extern struct tsens_plat_data data_8960;
 

@@ -25,3 +25,18 @@ def register_modules(registry):
             "OPLUS_FEATURE_CHG_BASIC"
         ],
     )
+
+    registry.register(
+        name = "drivers/usb/repeater/repeater-i2c-eusb2",
+        out = "repeater-i2c-eusb2.ko",
+        config = "CONFIG_I2C_EUSB2_REPEATER",
+        srcs = [
+            # do not sort
+            "drivers/usb/repeater/repeater-i2c-eusb2.c",
+        ],
+        deps = [
+            # do not sort
+            "drivers/base/regmap/qti-regmap-debugfs",
+            "drivers/usb/repeater/repeater",
+        ],
+    )

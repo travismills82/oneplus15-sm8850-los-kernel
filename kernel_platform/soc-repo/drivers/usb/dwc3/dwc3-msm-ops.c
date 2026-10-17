@@ -13,6 +13,10 @@
 #include <linux/usb/android_configfs_uevent.h>
 #include <linux/usb/dwc3-msm.h>
 #include <linux/usb/composite.h>
+#include <linux/usb/ch9.h>
+#include <linux/device.h>
+#include <linux/workqueue.h>
+#include <linux/power_supply.h>
 #include "drivers/usb/dwc3/core.h"
 #include "debug-ipc.h"
 #include "drivers/usb/dwc3/gadget.h"
@@ -28,6 +32,13 @@ union kprobe_data {
 	};
 	struct work_struct *data;
 };
+
+struct vbus_draw_work {
+	struct work_struct work;
+	unsigned int mA;
+};
+
+static struct vbus_draw_work *vbus_work_item;
 
 static int entry_dwc3_suspend_common(struct kretprobe_instance *ri,
 				struct pt_regs *regs)
@@ -78,6 +89,47 @@ static int exit_dwc3_suspend_common(struct kretprobe_instance *ri,
 	return 0;
 }
 
+/**
+ * is_uvc_function_active - Check if UVC function is present in USB composition
+ * @dwc: pointer to dwc3 structure
+ *
+ * Returns true if UVC (USB Video Class) function is active in the current
+ * USB gadget composition, false otherwise.
+ */
+static bool is_uvc_function_active(struct dwc3 *dwc)
+{
+	struct usb_gadget *gadget;
+	struct usb_composite_dev *cdev;
+	struct usb_configuration *config;
+	struct usb_function *func;
+
+	if (!dwc || !dwc->gadget)
+		return false;
+
+	gadget = dwc->gadget;
+	if (!gadget->ep0 || !gadget->ep0->driver_data)
+		return false;
+
+	cdev = get_gadget_data(gadget);
+	if (!cdev)
+		return false;
+
+	/* Iterate through all configurations */
+	list_for_each_entry(config, &cdev->configs, list) {
+		/* Check each function in the configuration */
+		list_for_each_entry(func, &config->functions, list) {
+			/* Check if function name contains "uvc" */
+			if (func->name && strstr(func->name, "uvc")) {
+				dev_dbg(dwc->dev, "UVC function detected: %s\n",
+					func->name);
+				return true;
+			}
+		}
+	}
+
+	return false;
+}
+
 static int entry_usb_ep_set_maxpacket_limit(struct kretprobe_instance *ri,
 				struct pt_regs *regs)
 {
@@ -89,8 +141,13 @@ static int entry_usb_ep_set_maxpacket_limit(struct kretprobe_instance *ri,
 	dep =  to_dwc3_ep(ep);
 	dwc = dep->dwc;
 
-	data->dwc = dwc;
-	data->xi0 = dep->number;
+	if (dwc && (dwc->dev) &&
+	   (strcmp(dev_driver_string(dwc->dev), "dwc3") == 0)) {
+		data->dwc = dwc;
+		data->xi0 = dep->number;
+	} else {
+		data->dwc = NULL;
+	}
 
 	return 0;
 }
@@ -101,8 +158,14 @@ static int exit_usb_ep_set_maxpacket_limit(struct kretprobe_instance *ri,
 	union kprobe_data *data = (union kprobe_data *)ri->data;
 	struct dwc3 *dwc = data->dwc;
 	u8 epnum = data->xi0;
-	struct dwc3_ep *dep = dwc->eps[epnum];
-	struct usb_ep *ep = &dep->endpoint;
+	struct dwc3_ep *dep;
+	struct usb_ep *ep;
+
+	if (!dwc)
+		return 0;
+
+	dep = dwc->eps[epnum];
+	ep = &dep->endpoint;
 
 	if (epnum >= 2) {
 		ep->maxpacket_limit = 1024;
@@ -123,21 +186,48 @@ static int entry_dwc3_gadget_run_stop(struct kretprobe_instance *ri,
 		 * DWC3 gadget IRQ uses a threaded handler which normally runs
 		 * at SCHED_FIFO priority.  If it gets busy processing a high
 		 * volume of events (usually EP events due to heavy traffic) it
-		 * can potentially starve non-RT taks from running and trigger
+		 * can potentially starve non-RT tasks from running and trigger
 		 * RT throttling in the scheduler; on some build configs this
-		 * will panic.  So lower the thread's priority to run as non-RT
-		 * (with a nice value equivalent to a high-priority workqueue).
-		 * It has been found to not have noticeable performance impact.
+		 * will panic.
+		 *
+		 * However, UVC (USB Video Class) requires real-time priority
+		 * to avoid frame drops and glitches. So we conditionally set
+		 * the scheduler policy based on whether UVC is in the composition:
+		 * - UVC present: Use SCHED_FIFO with highest priority
+		 * - UVC absent: Use SCHED_NORMAL to avoid RT throttling
 		 */
 		struct irq_desc *irq_desc = irq_to_desc(dwc->irq_gadget);
 		struct irqaction *action = irq_desc ? irq_desc->action : NULL;
+		bool uvc_active;
 
 		dwc3_msm_notify_event(dwc, DWC3_GSI_EVT_BUF_SETUP, 0);
+
+		/* Check if UVC function is present in the composition */
+		uvc_active = is_uvc_function_active(dwc);
+
 		for ( ; action != NULL; action = action->next) {
 			if (action->thread) {
-				dev_info(dwc->dev, "Set IRQ thread:%s pid:%d to SCHED_NORMAL prio\n",
-					action->thread->comm, action->thread->pid);
-				sched_set_normal(action->thread, MIN_NICE);
+				if (uvc_active) {
+					/*
+					 * UVC needs real-time priority to avoid frame drops.
+					 * Use sched_set_fifo() which sets SCHED_FIFO.
+					 */
+					sched_set_fifo(action->thread);
+					dev_info(dwc->dev,
+						"Set IRQ thread:%s pid:%d to SCHED_FIFO low priority (UVC active)\n",
+						action->thread->comm,
+						action->thread->pid);
+				} else {
+					/*
+					 * Non-UVC composition: use SCHED_NORMAL to avoid
+					 * RT throttling issues.
+					 */
+					sched_set_normal(action->thread, MIN_NICE);
+					dev_info(dwc->dev,
+						"Set IRQ thread:%s pid:%d to SCHED_NORMAL (no UVC)\n",
+						action->thread->comm,
+						action->thread->pid);
+				}
 				break;
 			}
 		}
@@ -282,6 +372,51 @@ static int entry_android_work(struct kretprobe_instance *ri,
 	return 0;
 }
 
+static void vbus_draw_work_handler(struct work_struct *work)
+{
+	struct vbus_draw_work *vbus_work = container_of(work, struct vbus_draw_work, work);
+	unsigned int mA = vbus_work->mA;
+	union power_supply_propval val = {0};
+	struct power_supply *usb_psy;
+	int ret;
+
+	usb_psy = power_supply_get_by_name("usb");
+	if (!usb_psy) {
+		pr_err("Could not get usb psy\n");
+		return;
+	}
+
+	pr_info("Avail curr from USB = %u\n", mA);
+	val.intval = 1000 * mA;
+	ret = power_supply_set_property(usb_psy, POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT, &val);
+	if (ret)
+		pr_err("failed to set power supply property, ret=%d\n", ret);
+
+	power_supply_put(usb_psy);
+}
+
+static int entry_dwc3_gadget_vbus_draw(struct kretprobe_instance *ri,
+				       struct pt_regs *regs)
+{
+	struct usb_gadget *g = (struct usb_gadget *)regs->regs[0];
+	unsigned int mA = (unsigned int)regs->regs[1];
+	struct dwc3 *dwc = gadget_to_dwc(g);
+
+	/*
+	 * Only set power supply for generic phy subsystem
+	 * usb-phy case wil be handled in gadget.c
+	 */
+	if (dwc->usb2_phy)
+		return 0;
+
+	if (vbus_work_item) {
+		vbus_work_item->mA = mA;
+		schedule_work(&vbus_work_item->work);
+	}
+
+	return 0;
+}
+
 static int exit_android_work(struct kretprobe_instance *ri,
 			    struct pt_regs *regs)
 {
@@ -300,13 +435,13 @@ static int exit_android_work(struct kretprobe_instance *ri,
 }
 
 static int entry_dwc3_host_exit(struct kretprobe_instance *ri,
-			    struct pt_regs *regs)
+				struct pt_regs *regs)
 {
 	return 0;
 }
 
 static int exit_dwc3_host_exit(struct kretprobe_instance *ri,
-			    struct pt_regs *regs)
+				   struct pt_regs *regs)
 {
 	mdelay(200);
 	return 0;
@@ -337,6 +472,7 @@ static struct kretprobe dwc3_msm_probes[] = {
 	ENTRY_EXIT(android_work),
 	ENTRY_EXIT(usb_ep_set_maxpacket_limit),
 	ENTRY_EXIT(dwc3_suspend_common),
+	ENTRY(dwc3_gadget_vbus_draw),
 	ENTRY(trace_event_raw_event_dwc3_log_request),
 	ENTRY(trace_event_raw_event_dwc3_log_gadget_ep_cmd),
 	ENTRY(trace_event_raw_event_dwc3_log_trb),
@@ -349,6 +485,12 @@ int dwc3_msm_kretprobe_init(void)
 {
 	int ret;
 	int i;
+
+	vbus_work_item = kzalloc(sizeof(*vbus_work_item), GFP_KERNEL);
+	if (!vbus_work_item)
+		return -ENOMEM;
+
+	INIT_WORK(&vbus_work_item->work, vbus_draw_work_handler);
 
 	for (i = 0; i < ARRAY_SIZE(dwc3_msm_probes) ; i++) {
 		ret = register_kretprobe(&dwc3_msm_probes[i]);
@@ -366,5 +508,11 @@ void dwc3_msm_kretprobe_exit(void)
 
 	for (i = 0; i < ARRAY_SIZE(dwc3_msm_probes); i++)
 		unregister_kretprobe(&dwc3_msm_probes[i]);
-}
 
+	/* Flush any pending work from system workqueue */
+	if (vbus_work_item) {
+		flush_work(&vbus_work_item->work);
+		kfree(vbus_work_item);
+		vbus_work_item = NULL;
+	}
+}

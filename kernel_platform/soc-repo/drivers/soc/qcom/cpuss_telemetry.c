@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2025, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  */
 #define pr_fmt(fmt) "%s: " fmt, __func__
 
@@ -22,15 +22,15 @@
 #define CLUSTER_CENTRIC	(1)
 #define CORE_CENTRIC	(2)
 
-struct scmi_protocol_handle *ph_telemetry;
-const struct qcom_scmi_vendor_ops *vendor_ops;
-struct telemetry_global_param_t *telemetry;
-const struct telemetry_counter_attributes_name_t *pname;
-struct telemetry_counter_attributes_value_t *pvalue;
+static struct scmi_protocol_handle *ph_telemetry;
+static const struct qcom_scmi_vendor_ops *vendor_ops;
+static struct telemetry_global_param_t *telemetry;
+static const struct telemetry_counter_attributes_name_t *pname;
+static struct telemetry_counter_attributes_value_t *pvalue;
 static struct dentry *dir;
 static struct dentry **cluster_dir;
 static struct dentry **core_dir;
-u64 *fid;
+static u64 *fid;
 
 /*
  * Unique counter ids are assigned to each telemetry counters,
@@ -41,15 +41,19 @@ u64 *fid;
  */
 const char *get_telemetry_counter_name(u32 counter_id)
 {
-	const char *name  = pname[counter_id].name;
+	if (!pname)
+		return NULL;
 
-	return name;
+	return pname[counter_id].name;
 }
 EXPORT_SYMBOL_GPL(get_telemetry_counter_name);
 
 int64_t get_telemetry_counter_value(u32 counter_id)
 {
 	int64_t stat;
+
+	if (!telemetry || !pvalue)
+		return -ENODEV;
 
 	while (1) {
 		int64_t start_value;
@@ -130,15 +134,20 @@ DEFINE_DEBUGFS_ATTRIBUTE(telemetry_stats_fops, generic_get, NULL, "%llu\n");
 
 static void telemetry_memory_deallocation(void)
 {
-	kfree(fid);
-	kfree(cluster_dir);
-	kfree(core_dir);
-	if (telemetry)
+	if (telemetry) {
 		iounmap(telemetry);
-	if (pname)
+		telemetry = NULL;
+	}
+
+	if (pname) {
 		iounmap((void *)pname);
-	if (pvalue)
+		pname = NULL;
+	}
+
+	if (pvalue) {
 		iounmap(pvalue);
+		pvalue = NULL;
+	}
 }
 
 static int cpuss_telemetry_create_fs_entries(struct scmi_device *sdev)
@@ -157,7 +166,7 @@ static int cpuss_telemetry_create_fs_entries(struct scmi_device *sdev)
 	s32 temp = 0;
 	u8 len = 0;
 
-	fid = kcalloc(telemetry->num_max_counters, sizeof(u64), GFP_KERNEL);
+	fid = devm_kcalloc(dev, telemetry->num_max_counters, sizeof(u64), GFP_KERNEL);
 	if (!fid)
 		return -ENOMEM;
 
@@ -168,7 +177,7 @@ static int cpuss_telemetry_create_fs_entries(struct scmi_device *sdev)
 		return -ENOMEM;
 	}
 
-	cluster_dir = kzalloc(sizeof(struct dentry *) *
+	cluster_dir = devm_kzalloc(dev, sizeof(struct dentry *) *
 			telemetry->num_max_cluster, GFP_KERNEL);
 	if (!cluster_dir)
 		return -ENOMEM;
@@ -183,7 +192,7 @@ static int cpuss_telemetry_create_fs_entries(struct scmi_device *sdev)
 		}
 	}
 
-	core_dir = kzalloc(sizeof(struct dentry *) * telemetry->num_max_core, GFP_KERNEL);
+	core_dir = devm_kzalloc(dev, sizeof(struct dentry *) * telemetry->num_max_core, GFP_KERNEL);
 	if (!core_dir)
 		return -ENOMEM;
 
@@ -295,7 +304,7 @@ static int scmi_cpuss_telemetry_probe(struct scmi_device *sdev)
 		return -ENODEV;
 	}
 
-	gsize = sizeof(struct telemetry_global_param_t *);
+	gsize = sizeof(struct telemetry_global_param_t);
 
 	telemetry = (struct telemetry_global_param_t *)
 			ioremap_cache(sh_mem_base_address, gsize);

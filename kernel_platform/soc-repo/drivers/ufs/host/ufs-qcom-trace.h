@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  */
 
 #undef TRACE_SYSTEM
@@ -220,6 +220,65 @@ TRACE_EVENT(ufs_qcom_shutdown,
 		"%s: Going to Shutdown!",
 		 __get_str(dev_name)
 	)
+);
+
+TRACE_EVENT(ufs_set_storage_boost,
+
+	TP_PROTO(int type),
+
+	TP_ARGS(type),
+
+	TP_STRUCT__entry(
+		__field(int, type)
+	),
+
+	TP_fast_assign(
+		__entry->type = type;
+	),
+
+	TP_printk("type: %d", __entry->type)
+);
+
+TRACE_EVENT(ufs_fwork,
+
+	TP_PROTO(unsigned long num, bool voted, bool cancel),
+
+	TP_ARGS(num, voted, cancel),
+
+	TP_STRUCT__entry(
+		__field(unsigned long, num)
+		__field(bool, voted)
+		__field(bool, cancel)
+	),
+
+	TP_fast_assign(
+		__entry->num = num;
+		__entry->voted = voted;
+		__entry->cancel = cancel;
+	),
+
+	TP_printk("num: %lu, voted: %d, cancel: %d", __entry->num,
+						__entry->voted,
+						__entry->cancel)
+);
+
+TRACE_EVENT(ufs_qcom_update_qos_constraints,
+
+	TP_PROTO(unsigned int vote, unsigned int qcg_num),
+
+	TP_ARGS(vote, qcg_num),
+
+	TP_STRUCT__entry(
+		__field(unsigned int, vote)
+		__field(unsigned int, qcg_num)
+	),
+
+	TP_fast_assign(
+		__entry->vote = vote;
+		__entry->qcg_num = qcg_num;
+	),
+
+	TP_printk("vote: %u, qcg: %u", __entry->vote, __entry->qcg_num)
 );
 
 DECLARE_EVENT_CLASS(ufs_qcom_clk_template,

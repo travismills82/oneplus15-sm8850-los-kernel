@@ -2,7 +2,7 @@
 /*
  * Synopsys DesignWare XPCS platform device driver
  *
- * Copyright (c) 2024-2025 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  */
 
 #include <linux/delay.h>
@@ -26,7 +26,9 @@
 #define XPCSERR(fmt, args...) \
 	pr_err(DRV_NAME " %s:%d " fmt, __func__, __LINE__, ## args)
 
-phy_interface_t g_interface;
+#define XPCSDBG(fmt, args...) \
+	pr_debug(DRV_NAME " %s:%d " fmt, __func__, __LINE__, ## args)
+
 static const int xpcs_usxgmii_features[] = {
 	ETHTOOL_LINK_MODE_Pause_BIT,
 	ETHTOOL_LINK_MODE_Asym_Pause_BIT,
@@ -251,6 +253,23 @@ static int qcom_xpcs_reset_usxgmii(struct dw_xpcs_qcom *qxpcs)
 
 		switch (qxpcs->phy_interface) {
 		case PHY_INTERFACE_MODE_USXGMII:
+			if (qxpcs->needs_aneg) {
+				ret = qcom_xpcs_poll_bit_set(qxpcs,
+							     DW_VR_MII_AN_INTR_STS,
+							     DW_VR_MII_ANCMPLT_INTR);
+				if (ret < 0)
+					return ret;
+
+				XPCSDBG("XPCS AN completed\n");
+				ret = qcom_xpcs_read(qxpcs, DW_VR_MII_AN_INTR_STS);
+				if (ret < 0)
+					return ret;
+
+				/* Clear the AN completion interrupt status */
+				ret &= ~DW_VR_MII_ANCMPLT_INTR;
+				qcom_xpcs_write(qxpcs, DW_VR_MII_AN_INTR_STS, ret);
+			}
+			qcom_xpcs_read(qxpcs, DW_SR_MII_MMD_STS);
 			ret = qcom_xpcs_poll_bit_set(qxpcs,
 						     DW_SR_MII_MMD_STS, DW_SR_MII_STS_LINK_STS);
 			if (ret < 0)
@@ -258,6 +277,7 @@ static int qcom_xpcs_reset_usxgmii(struct dw_xpcs_qcom *qxpcs)
 			fallthrough;
 		case PHY_INTERFACE_MODE_10GBASER:
 		case PHY_INTERFACE_MODE_5GBASER:
+			qcom_xpcs_read(qxpcs, DW_SR_MII_PCS_STS1);
 			ret = qcom_xpcs_poll_bit_set(qxpcs,
 						     DW_SR_MII_PCS_STS1, DW_SR_XS_PCS_STS1);
 			if (ret < 0)
@@ -431,6 +451,87 @@ static int qcom_xpcs_config(struct phylink_pcs *pcs, unsigned int mode, phy_inte
 	return qcom_xpcs_do_config(qxpcs, interface);
 }
 
+static int qcom_xpcs_get_link_status(struct dw_xpcs_qcom *qxpcs,
+				     struct phylink_link_state *state)
+{
+	unsigned int retries = 32;
+	unsigned int count = 0;
+	int ret = -EFAULT;
+
+	if (!qxpcs)
+		goto failure;
+
+/* Try to recover the link before posting link failure */
+recover:
+	count++;
+
+	if (count >= retries) {
+		XPCSERR("Link recovery failed\n");
+		goto failure;
+	}
+
+	/* Reset the link to make sure XPCS is aligned to Serdes for accuracy */
+	ret = qcom_xpcs_read(qxpcs, DW_VR_MII_PCS_DIG_CTRL1);
+	if (ret < 0)
+		goto failure;
+
+	qcom_xpcs_write(qxpcs, DW_VR_MII_PCS_DIG_CTRL1, ret | SOFT_RST);
+
+	ret = qcom_xpcs_poll_reset(qxpcs, DW_VR_MII_PCS_DIG_CTRL1, SW_RST_BIT_STATUS);
+
+	if (ret < 0) {
+		XPCSERR("Poll reset failed\n");
+		goto recover;
+	}
+
+	if (!qxpcs->intr_en) {
+		switch (qxpcs->phy_interface) {
+		case PHY_INTERFACE_MODE_USXGMII:
+			if (qxpcs->needs_aneg) {
+				ret = qcom_xpcs_poll_bit_set(qxpcs,
+							     DW_VR_MII_AN_INTR_STS,
+							     DW_VR_MII_ANCMPLT_INTR);
+
+				if (ret < 0)
+					goto recover;
+				else
+					XPCSDBG("XPCS AN completed\n");
+
+				ret = qcom_xpcs_read(qxpcs, DW_VR_MII_AN_INTR_STS);
+				if (ret < 0)
+					goto recover;
+
+				/* Clear the AN completion interrupt status */
+				ret &= ~DW_VR_MII_ANCMPLT_INTR;
+				qcom_xpcs_write(qxpcs, DW_VR_MII_AN_INTR_STS, ret);
+			}
+			/* Check for Link status */
+			qcom_xpcs_read(qxpcs, DW_SR_MII_MMD_STS);
+			ret = qcom_xpcs_poll_bit_set(qxpcs,
+						     DW_SR_MII_MMD_STS, DW_SR_MII_STS_LINK_STS);
+			if (ret < 0)
+				goto recover;
+			fallthrough;
+		case PHY_INTERFACE_MODE_10GBASER:
+		case PHY_INTERFACE_MODE_5GBASER:
+			/* Check for remote Link status */
+			qcom_xpcs_read(qxpcs, DW_SR_MII_PCS_STS1);
+			ret = qcom_xpcs_poll_bit_set(qxpcs,
+						     DW_SR_MII_PCS_STS1, DW_SR_XS_PCS_STS1);
+			if (ret < 0) {
+				XPCSERR("Link is down try to recover\n");
+				goto recover;
+			}
+		}
+		state->link = true;
+		return 0;
+	}
+
+failure:
+	state->link = false;
+	return ret;
+}
+
 static int xpcs_get_state_c37_usxgmii(struct dw_xpcs_qcom *qxpcs,
 				      struct phylink_link_state *state)
 {
@@ -461,9 +562,17 @@ static void qcom_xpcs_get_state(struct phylink_pcs *pcs,
 
 	switch (compat->an_mode) {
 	case DW_AN_C37_USXGMII:
-		ret = xpcs_get_state_c37_usxgmii(qxpcs, state);
+		if (!qxpcs->intr_en)
+			ret = qcom_xpcs_get_link_status(qxpcs, state);
+		else
+			ret = xpcs_get_state_c37_usxgmii(qxpcs, state);
 		if (ret < 0)
 			XPCSERR("Failed to get USXGMII state\n");
+		break;
+	case DW_10GBASER:
+		ret = qcom_xpcs_get_link_status(qxpcs, state);
+		if (ret < 0)
+			XPCSERR("Failed to get BaseR state\n");
 		break;
 	default:
 		return;
@@ -528,7 +637,7 @@ static int qcom_xpcs_enable(struct phylink_pcs *pcs)
 	struct dw_xpcs_qcom *qxpcs = phylink_pcs_to_xpcs(pcs);
 	int ret = 0;
 
-	if (qxpcs->pcs_fusa_intr)
+	if (qxpcs->pcs_fusa_intr > 0)
 		ret = qcom_xpcs_fusa_intr_enable(qxpcs);
 
 	return ret;
@@ -538,7 +647,7 @@ static void qcom_xpcs_disable(struct phylink_pcs *pcs)
 {
 	struct dw_xpcs_qcom *qxpcs = phylink_pcs_to_xpcs(pcs);
 
-	if (qxpcs->pcs_fusa_intr)
+	if (qxpcs->pcs_fusa_intr > 0)
 		qcom_xpcs_fusa_intr_disable(qxpcs);
 }
 
@@ -578,7 +687,7 @@ void qcom_xpcs_get_err_stats(struct phylink_pcs *pcs, unsigned long *ptr)
 }
 EXPORT_SYMBOL_GPL(qcom_xpcs_get_err_stats);
 
-void qcom_xpcs_link_up_usxgmii(struct dw_xpcs_qcom *qxpcs, int speed)
+int qcom_xpcs_link_up_usxgmii(struct dw_xpcs_qcom *qxpcs, int speed)
 {
 	int mmd_ctrl;
 	int ret;
@@ -593,7 +702,7 @@ void qcom_xpcs_link_up_usxgmii(struct dw_xpcs_qcom *qxpcs, int speed)
 					SW_RST_BIT_STATUS);
 	if (mmd_ctrl < 0) {
 		XPCSERR("Failed to perform soft reset\n");
-		return;
+		goto read_err;
 	}
 
 	if (qxpcs->needs_aneg) {
@@ -639,7 +748,7 @@ void qcom_xpcs_link_up_usxgmii(struct dw_xpcs_qcom *qxpcs, int speed)
 		break;
 	default:
 		XPCSERR("Invalid speed mode selected\n");
-		return;
+		return -EINVAL;
 	}
 
 	qcom_xpcs_write(qxpcs, DW_SR_MII_MMD_CTRL, mmd_ctrl);
@@ -663,18 +772,18 @@ void qcom_xpcs_link_up_usxgmii(struct dw_xpcs_qcom *qxpcs, int speed)
 		qxpcs->pcs_fusa_error_count = 0x0;
 	}
 	XPCSINFO("USXGMII link is up\n");
-	return;
+	return 0;
 read_err:
 	XPCSERR("Failed to read register\n");
+	return -EIO;
 out:
 	XPCSERR("Failed to bring up USXGMII link\n");
+	return -EAGAIN;
 }
 
 static int qcom_xpcs_select_mode(struct dw_xpcs_qcom *qxpcs, phy_interface_t interface)
 {
 	int ret;
-
-	g_interface = interface;
 
 	if (interface == PHY_INTERFACE_MODE_USXGMII ||
 	    interface == PHY_INTERFACE_MODE_10GBASER ||
@@ -728,6 +837,27 @@ out:
 	return -EINVAL;
 }
 
+static void qcom_xpcs_serdes_reset(struct dw_xpcs_qcom *qxpcs)
+{
+	int err = 0;
+
+	if (qxpcs->reset_serdes) {
+		err = reset_control_assert(qxpcs->reset_serdes);
+		if (err < 0) {
+			XPCSERR("Assert failed: %d\n", err);
+			return;
+		}
+		usleep_range(2000, 4000);
+
+		err = reset_control_deassert(qxpcs->reset_serdes);
+		if (err < 0) {
+			XPCSERR("Deassert failed: %d\n", err);
+			return;
+		}
+		usleep_range(2000, 4000);
+	}
+}
+
 /* USXGMII: Return early if interrupt was enabled.
  * Autonegotiation ISR will set speed and duplex instead.
  * SGMII: For 2.5Gbps, let ISR do NOP since SGMII+ not supported in
@@ -738,6 +868,8 @@ void qcom_xpcs_link_up(struct phylink_pcs *pcs, unsigned int mode,
 		       phy_interface_t interface, int speed, int duplex)
 {
 	struct dw_xpcs_qcom *qxpcs = phylink_pcs_to_xpcs(pcs);
+	struct phylink_link_state state;
+	int recover_count = 0;
 	int ret;
 
 	if (qxpcs->intr_en)
@@ -747,6 +879,8 @@ void qcom_xpcs_link_up(struct phylink_pcs *pcs, unsigned int mode,
 	 * to be able to supply the required Rx clock by this time
 	 */
 	qcom_xpcs_loopback(qxpcs, false);
+
+	qcom_xpcs_serdes_reset(qxpcs);
 
 	switch (interface) {
 	case PHY_INTERFACE_MODE_10GBASER:
@@ -758,12 +892,46 @@ void qcom_xpcs_link_up(struct phylink_pcs *pcs, unsigned int mode,
 		qcom_xpcs_write(qxpcs, DW_VR_MII_PCS_DIG_CTRL1, ret &= ~DW_USXGMII_EN);
 		fallthrough;
 	case PHY_INTERFACE_MODE_USXGMII:
-		qcom_xpcs_link_up_usxgmii(qxpcs, speed);
+		ret = qcom_xpcs_link_up_usxgmii(qxpcs, speed);
+		if (ret == -EAGAIN)
+			goto recovery;
+		else
+			return;
 		break;
 	default:
 		XPCSERR("Invalid MII mode: %s\n", phy_modes(interface));
 		return;
 	}
+
+recovery:
+	if (recover_count >= 10) {
+		/* ERROR CASE:
+		 * Enable Loopback RX clock as we expect the Phy or switch
+		 * to be able to supply the required Rx clock by this time
+		 * But since XPCS link up failed we dont know what went wrong on the
+		 * far end side.
+		 * This can happen if Phy hardware configuration done is incorrect
+		 * or Phy is not supplying consistent RX clocks due to hardware issue.
+		 */
+		if (qxpcs->pcs.rxc_always_on)
+			qcom_xpcs_loopback(qxpcs, true);
+
+		XPCSERR("XPCS recovery failed\n");
+		return;
+	}
+
+	XPCSDBG("Recovery attempt in progress, count: %d\n", recover_count);
+	recover_count++;
+
+	qcom_xpcs_serdes_reset(qxpcs);
+	qcom_xpcs_get_link_status(qxpcs, &state);
+
+	if (!state.link) {
+		XPCSERR("The link still fails after resetting the SerDes and XPCS.\n");
+		goto recovery;
+	}
+	return;
+
 read_err:
 	XPCSERR("Failed to read register\n");
 }
@@ -924,9 +1092,9 @@ void qcom_xpcs_destroy(struct phylink_pcs *pcs)
 			continue;
 
 		qxpcs->id = entry;
-		compat = xpcs_find_compat(entry, g_interface);
+		compat = xpcs_find_compat(entry, qxpcs->phy_interface);
 		if (!compat) {
-			XPCSERR("Incompatible MII interface: %d\n", g_interface);
+			XPCSERR("Incompatible MII interface: %d\n", qxpcs->phy_interface);
 			ret = -ENODEV;
 			goto out;
 		}
@@ -1027,6 +1195,13 @@ static int qcom_xpcs_probe(struct platform_device *pdev)
 	qxpcs->pcs_fusa_intr = platform_get_irq_byname_optional(pdev, "sfty");
 	if (qxpcs->pcs_fusa_intr < 0)
 		pr_info("XPCS FUSA IRQ is not enabled\n");
+
+	qxpcs->reset_serdes =
+		devm_reset_control_get_optional(&pdev->dev, "serdes_reset");
+	if (IS_ERR(qxpcs->reset_serdes)) {
+		pr_err("XPCS Serdes reset PM domain not found.\n");
+		qxpcs->reset_serdes = NULL;
+	}
 
 	platform_set_drvdata(pdev, qxpcs);
 

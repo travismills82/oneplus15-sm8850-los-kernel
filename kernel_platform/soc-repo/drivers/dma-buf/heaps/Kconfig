@@ -125,33 +125,12 @@ config QCOM_DMABUF_HEAPS_DEFERRED_FREE
 	  normal allocation/free path.
 	  If in doubt, say N here.
 
-config OPLUS_FEATURE_MM_BOOSTPOOL
-	bool "Oplus DMA-BUF heaps boost-pool library"
-	depends on QCOM_DMABUF_HEAPS_SYSTEM
+config QCOM_DMABUF_HEAPS_SC_TCM
+	bool "QCOM dma-buf SC TCM heap"
+	depends on QCOM_SC_TCM_MEM && QCOM_DMABUF_HEAPS_CARVEOUT
 	help
-	  Choose this option to enable the DMA-BUF heaps boost-pool library.
+	  Choose this option to build QCOM DMA-BUF SC TCM heap.
+	  This is backed by the SC TCM memory which gets
+	  registered to this heap during the initialization.
+	  If in doubt, say N here.
 
-config OPLUS_FEATURE_MM_OSVELTE
-	tristate "osvelte driver"
-	help
-	  This driver used for memory debugging.
-
-config OPLUS_FEATURE_MM_TA_CMA_RSV
-	bool "oplus mm ta_cma_rsv"
-	depends on OPLUS_FEATURE_MM_OSVELTE
-	help
-	  This driver used for reserver cma pages for ta
-
-config OPLUS_FEATURE_AIZEROCOPY
-	tristate "AI zero copy"
-	select DMA_SHARED_BUFFER
-	default n
-	help
-	  Enable AI zero copy
-
-config AIZEROFS_DEBUG_SYS_ABI
-	bool "aizerofs sysfs debug abi"
-	depends on OPLUS_FEATURE_AIZEROCOPY
-	default y
-	help
-	  support aizerofs sysfs debug

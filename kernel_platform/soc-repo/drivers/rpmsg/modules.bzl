@@ -142,5 +142,78 @@ def register_modules(registry):
             "kernel/trace/qcom_ipc_logging",
             "drivers/rpmsg/qcom_glink",
             "drivers/remoteproc/rproc_qcom_common",
+            "drivers/soc/qcom/power_mode",
+        ],
+    )
+
+    registry.register(
+        name = "drivers/rpmsg/qcom_glink_rpm",
+        out = "qcom_glink_rpm.ko",
+        config = "CONFIG_RPMSG_QCOM_GLINK_RPM",
+        srcs = [
+            # do not sort
+            "drivers/rpmsg/qcom_glink_native.h",
+            "drivers/rpmsg/qcom_glink_rpm.c",
+        ],
+        deps = [
+            # do not sort
+            "drivers/rpmsg/qcom_glink",
+            "kernel/trace/qcom_ipc_logging",
+            "drivers/soc/qcom/debug_symbol",
+        ],
+    )
+
+    registry.register(
+        name = "drivers/rpmsg/rpm-smd",
+        out = "rpm-smd.ko",
+        config = "CONFIG_MSM_RPM_SMD",
+        srcs = [
+            # do not sort
+            "drivers/rpmsg/rpm-smd.c",
+        ],
+        deps = [
+            # do not sort
+            "kernel/trace/qcom_ipc_logging",
+            "drivers/rpmsg/qcom_glink",
+            "drivers/rpmsg/qcom_glink_smem",
+            "drivers/rpmsg/qcom_glink_spss",
+            "drivers/rpmsg/qcom_glink_rpm",
+            "drivers/irqchip/qcom-mpm",
+        ],
+    )
+
+    registry.register(
+        name = "drivers/rpmsg/rpm_dump",
+        out = "rpm_dump.ko",
+        config = "CONFIG_MSM_RPM_SMD",
+        srcs = [
+            # do not sort
+            "drivers/rpmsg/rpm_dump.c",
+        ],
+        deps = [
+            # do not sort
+            "drivers/soc/qcom/qcom_ramdump",
+            "drivers/firmware/qcom/qcom-scm",
+            "drivers/remoteproc/rproc_qcom_common",
+            "drivers/rpmsg/rpm-smd",
+        ],
+    )
+
+    registry.register(
+        name = "drivers/rpmsg/qcom_glink_slatecom",
+        out = "qcom_glink_slatecom.ko",
+        config = "CONFIG_RPMSG_QCOM_GLINK_SLATECOM",
+        srcs = [
+            # do not sort
+            "drivers/rpmsg/qcom_glink_native.h",
+            "drivers/rpmsg/qcom_glink_slatecom.c",
+            "drivers/soc/qcom/slatecom.h",
+        ],
+        deps = [
+            # do not sort
+            "drivers/rpmsg/qcom_glink",
+            "kernel/trace/qcom_ipc_logging",
+            "drivers/soc/qcom/debug_symbol",
+            "drivers/soc/qcom/slatecom_spi",
         ],
     )

@@ -1,13 +1,14 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2015-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2023-2024, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  */
 
 #ifndef __QCOM_SECURE_BUFFER_H__
 #define __QCOM_SECURE_BUFFER_H__
 
 #include <linux/scatterlist.h>
+#include <linux/notifier.h>
 
 /*
  * if you add a secure VMID here make sure you update
@@ -40,6 +41,7 @@ enum vmid {
 	VMID_NAV = 0x2B,
 	VMID_TVM = 0x2D,
 	VMID_OEMVM = 0x31,
+	VMID_GVM1 = 0x34,
 	VMID_LAST,
 	VMID_INVAL = -1
 };
@@ -47,6 +49,15 @@ enum vmid {
 #define PERM_READ                       0x4
 #define PERM_WRITE                      0x2
 #define PERM_EXEC			0x1
+
+struct hyp_assign_notifier_data {
+	struct sg_table *table;
+	u32 *source_vm_list;
+	int source_nelems;
+	int *dest_vmids;
+	int *dest_perms;
+	int dest_nelems;
+};
 
 #if IS_ENABLED(CONFIG_QCOM_SECURE_BUFFER)
 int hyp_assign_table(struct sg_table *table,
@@ -56,6 +67,8 @@ int hyp_assign_table(struct sg_table *table,
 const char *msm_secure_vmid_to_string(int secure_vmid);
 u32 msm_secure_get_vmid_perms(u32 vmid);
 int page_accessible(unsigned long pfn);
+int hyp_assign_notifier_register(struct notifier_block *nb);
+int hyp_assign_notifier_unregister(struct notifier_block *nb);
 #else
 static inline int hyp_assign_table(struct sg_table *table,
 			u32 *source_vm_list, int source_nelems,
@@ -79,5 +92,16 @@ static inline int page_accessible(unsigned long pfn)
 {
 	return 1;
 }
+
+static inline int hyp_assign_notifier_register(struct notifier_block *nb)
+{
+	return 0;
+}
+
+static inline int hyp_assign_notifier_unregister(struct notifier_block *nb)
+{
+	return 0;
+}
+
 #endif
 #endif

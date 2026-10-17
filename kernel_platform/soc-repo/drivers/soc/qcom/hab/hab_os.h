@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (c) 2019-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022-2024, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  */
 #ifndef __HAB_OS_H
 #define __HAB_OS_H
@@ -12,7 +12,7 @@
 #define pr_fmt(fmt) "hab:%s:%d " fmt, __func__, __LINE__
 
 #include <linux/types.h>
-
+#include <asm/arch_timer.h>
 #include <linux/habmm.h>
 #include <linux/hab_ioctl.h>
 
@@ -51,19 +51,11 @@ void hab_rb_init(struct rb_root *root);
 #define HAB_RB_ENTRY struct rb_node
 #define HAB_RB_ROOT struct rb_root
 
-#if defined(CONFIG_MSM_VHOST_HAB) || defined(CONFIG_MSM_VIRTIO_HAB)
-#include <asm/arch_timer.h>
-static inline unsigned long long msm_timer_get_sclk_ticks(void)
-{
-	return __arch_counter_get_cntpct();
-}
-#elif IS_ENABLED(CONFIG_MSM_BOOT_TIME_MARKER)
-#include <soc/qcom/boot_stats.h>
-#else
-static inline unsigned long long msm_timer_get_sclk_ticks(void)
-{
-	return 0;
-}
-#endif
+size_t hab_sgl_copy_buffer(struct scatterlist *sgl, void *buf,
+		      size_t buflen, off_t skip, bool to_buffer);
+void hab_sgl_free(struct scatterlist *sgl);
+struct scatterlist *hab_sgl_alloc_merge(unsigned long long length, gfp_t gfp,
+			      unsigned int *nent_p);
+void dump_hab_pending_signals(void);
 
 #endif /*__HAB_OS_H*/

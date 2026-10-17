@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /* Copyright (c) 2010-2015, 2018-2019 The Linux Foundation. All rights reserved.
  * Copyright (C) 2015 Linaro Ltd.
- * Copyright (c) 2022-2025 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  */
 #ifndef __QCOM_SCM_H
 #define __QCOM_SCM_H
@@ -9,6 +9,7 @@
 #include <linux/err.h>
 #include <linux/types.h>
 #include <linux/cpumask.h>
+#include <linux/notifier.h>
 
 #include <dt-bindings/firmware/qcom,scm.h>
 
@@ -158,6 +159,7 @@ static inline void qcom_scm_populate_mem_map_info(
 extern int qcom_scm_sec_wdog_deactivate(void);
 extern int qcom_scm_sec_wdog_trigger(void);
 extern int qcom_scm_disable_sdi(void);
+extern int qcom_scm_tsens_reinit(int *tsens_ret);
 
 bool qcom_scm_is_available(void);
 
@@ -171,6 +173,7 @@ extern void qcom_scm_set_download_mode(enum qcom_download_mode mode);
 extern int qcom_scm_get_download_mode(unsigned int *mode);
 extern int qcom_scm_config_cpu_errata(void);
 extern void qcom_scm_phy_update_scm_level_shifter(u32 val);
+extern void qcom_scm_deassert_ps_hold(void);
 
 struct qcom_scm_pas_metadata {
 	void *ptr;
@@ -184,7 +187,14 @@ extern void qcom_scm_pas_metadata_release(struct qcom_scm_pas_metadata *ctx,
 extern int qcom_scm_pas_shutdown_retry(u32 peripheral);
 
 extern int qcom_scm_get_sec_dump_state(u32 *dump_state);
+extern int qcom_scm_get_llcc_missrate(phys_addr_t in_buf, size_t in_buf_size,
+						phys_addr_t out_buf, size_t out_buf_size);
+extern int qcom_scm_get_llcc_occupancy(phys_addr_t in_buf, size_t in_buf_size,
+						phys_addr_t out_buf, size_t out_buf_size);
+extern int qcom_scm_memory_lat_profiler(phys_addr_t in_buf, size_t in_buf_size,
+						phys_addr_t out_buf, size_t out_buf_size);
 extern int qcom_scm_assign_dump_table_region(bool is_assign, phys_addr_t  addr, size_t size);
+extern int qcom_scm_dcc_fetch_data(void *to, size_t count);
 
 extern int qcom_scm_io_reset(void);
 
@@ -255,12 +265,19 @@ extern int qcom_scm_query_tz_time(u64 *ticks, u32 *frequency);
 extern int qcom_scm_invoke_smc(phys_addr_t in_buf, size_t in_buf_size,
 		phys_addr_t out_buf, size_t out_buf_size, int32_t *result,
 		u64 *response_type, unsigned int *data);
+extern int qcom_scm_invoke_smc_ffa(uint64_t ffa_handle, size_t offset,
+		size_t in_buf_size, size_t out_buf_size, int32_t *result,
+		u64 *response_type, unsigned int *data);
 extern int qcom_scm_invoke_smc_legacy(phys_addr_t in_buf, size_t in_buf_size,
 		phys_addr_t out_buf, size_t out_buf_size, int32_t *result,
 		u64 *response_type, unsigned int *data);
 extern int qcom_scm_invoke_callback_response(phys_addr_t out_buf,
 		size_t out_buf_size, int32_t *result, u64 *response_type,
 		unsigned int *data);
+extern int qcom_scm_invoke_callback_response_ffa(uint64_t ffa_handle,
+		size_t out_offset, size_t out_buf_size, int32_t *result,
+		u64 *response_type, unsigned int *data);
+extern int qcom_scm_invoke_ack_doorbell(u32 doorbell_id, u32 msg_id);
 
 extern void __qcom_scm_init(void);
 extern void __qcom_scm_qcpe_exit(void);
@@ -274,11 +291,15 @@ int qcom_scm_pas_mem_setup(u32 peripheral, phys_addr_t addr, phys_addr_t size);
 int qcom_scm_pas_auth_and_reset(u32 peripheral);
 int qcom_scm_pas_shutdown(u32 peripheral);
 bool qcom_scm_pas_supported(u32 peripheral);
+void qcom_scm_pas_store_memoryinfo(u32 peripheral, phys_addr_t addr,
+		phys_addr_t size);
+unsigned int qcom_scm_pas_get_shutdown_retry_delay_ms(void);
 
 int qcom_scm_io_readl(phys_addr_t addr, unsigned int *val);
 int qcom_scm_io_writel(phys_addr_t addr, unsigned int val);
 
 bool qcom_scm_restore_sec_cfg_available(void);
+int qcom_scm_spmi_permission_switch(u8 mode);
 int qcom_scm_restore_sec_cfg(u32 device_id, u32 spare);
 int qcom_scm_iommu_secure_ptbl_size(u32 spare, size_t *size);
 int qcom_scm_iommu_secure_ptbl_init(u64 addr, u32 size, u32 spare);
@@ -288,6 +309,15 @@ int qcom_scm_mem_protect_video_var(u32 cp_start, u32 cp_size,
 int qcom_scm_assign_mem(phys_addr_t mem_addr, size_t mem_sz, u64 *src,
 			const struct qcom_scm_vmperm *newvm,
 			unsigned int dest_cnt);
+struct qcom_scm_assign_mem_notifier_data {
+	phys_addr_t mem_addr;
+	size_t mem_sz;
+	u64 *srcvm;
+	const struct qcom_scm_vmperm *newvm;
+	unsigned int dest_cnt;
+};
+int qcom_scm_assign_mem_notifier_register(struct notifier_block *nb);
+int qcom_scm_assign_mem_notifier_unregister(struct notifier_block *nb);
 
 bool qcom_scm_ocmem_lock_available(void);
 int qcom_scm_ocmem_lock(enum qcom_scm_ocmem_client id, u32 offset, u32 size,
@@ -334,10 +364,10 @@ bool qcom_scm_lmh_dcvsh_available(void);
 int qcom_scm_gpu_init_regs(u32 gpu_req);
 
 int qcom_scm_shm_bridge_enable(void);
-int qcom_scm_shm_bridge_create(struct device *dev, u64 pfn_and_ns_perm_flags,
+int qcom_scm_shm_bridge_create(u64 pfn_and_ns_perm_flags,
 			       u64 ipfn_and_s_perm_flags, u64 size_and_flags,
 			       u64 ns_vmids, u64 *handle);
-int qcom_scm_shm_bridge_delete(struct device *dev, u64 handle);
+int qcom_scm_shm_bridge_delete(u64 handle);
 
 #ifdef CONFIG_QCOM_QSEECOM
 

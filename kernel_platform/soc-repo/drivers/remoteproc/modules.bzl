@@ -1,3 +1,4 @@
+load(":soc_repo_path.bzl", "SOC_MODULES_REPO_PATH")
 def register_modules(registry):
     registry.register(
         name = "drivers/remoteproc/qcom_pil_info",
@@ -41,9 +42,9 @@ def register_modules(registry):
             "drivers/virt/gunyah/gh_dbl",
             "arch/arm64/gunyah/gh_arm_drv",
             # Add for oplus mm feedback, CONFIG_OPLUS_FEATURE_MM_FEEDBACK
-            "//vendor/oplus/kernel/multimedia/feedback/bazel:oplus_mm_kevent_fb",
+            "//{}/oplus/kernel/multimedia/feedback/bazel:oplus_mm_kevent_fb".format(SOC_MODULES_REPO_PATH),
             # Add for oplus mdmrst, OPLUS_FEATURE_RECORD_MDMRST
-            "//vendor/oplus/hardware/radio/mdmrst/bazel:oplus_mdmrst",
+            "//{}/oplus/hardware/radio/mdmrst/bazel:oplus_mdmrst".format(SOC_MODULES_REPO_PATH),
         ],
         # Add for oplus config
         copts = ["-DCONFIG_OPLUS_FEATURE_MM_FEEDBACK",
@@ -87,6 +88,29 @@ def register_modules(registry):
             "drivers/virt/gunyah/gh_msgq",
             "drivers/virt/gunyah/gh_dbl",
             "arch/arm64/gunyah/gh_arm_drv",
+            "drivers/firmware/qcom/qcom_scm_smci",
+            "drivers/firmware/qcom/si_core/si_core_module",
+        ],
+    )
+
+    registry.register(
+        name = "drivers/remoteproc/qcom_rproc_slate",
+        out = "qcom_rproc_slate.ko",
+        config = "CONFIG_QCOM_RPROC_SLATE",
+        srcs = [
+            # do not sort
+            "drivers/remoteproc/qcom_rproc_slate.c",
+            "drivers/remoteproc/qcom_common.h",
+        ],
+        deps = [
+            # do not sort
+            "drivers/soc/qcom/mdt_loader",
+            "drivers/remoteproc/qcom_sysmon",
+            "drivers/remoteproc/rproc_qcom_common",
+            "drivers/firmware/qcom/qcom-scm",
+            "drivers/misc/qseecom_proxy",
+            "drivers/soc/qcom/slatecom_spi",
+            "drivers/soc/qcom/slatecom_interface",
         ],
     )
 
@@ -123,6 +147,8 @@ def register_modules(registry):
             "drivers/virt/gunyah/gh_msgq",
             "drivers/virt/gunyah/gh_dbl",
             "arch/arm64/gunyah/gh_arm_drv",
+            "drivers/firmware/qcom/qcom_scm_smci",
+            "drivers/firmware/qcom/si_core/si_core_module",
         ],
     )
 

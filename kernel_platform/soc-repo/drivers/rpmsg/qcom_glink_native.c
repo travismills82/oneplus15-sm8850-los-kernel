@@ -172,6 +172,8 @@ struct qcom_glink {
 
 	bool abort_tx;
 	void *ilc;
+
+	bool rx_wakeup;
 };
 
 enum {
@@ -239,6 +241,7 @@ struct glink_channel {
 
 	struct completion open_ack;
 	struct completion open_req;
+	struct completion close_ack;
 
 	struct mutex intent_req_lock;
 	int intent_req_result;
@@ -308,6 +311,8 @@ static struct glink_channel *qcom_glink_alloc_channel(struct qcom_glink *glink,
 
 	init_completion(&channel->open_req);
 	init_completion(&channel->open_ack);
+	init_completion(&channel->close_ack);
+	complete_all(&channel->close_ack);
 	init_waitqueue_head(&channel->intent_req_wq);
 	channel->intent_timeout_count = 0;
 
@@ -436,6 +441,15 @@ static void qcom_glink_tx_kick(struct qcom_glink *glink)
 	glink->tx_pipe->kick(glink->tx_pipe);
 }
 
+static void qcom_glink_pipe_reset(struct qcom_glink *glink)
+{
+	if (glink->tx_pipe->reset)
+		glink->tx_pipe->reset(glink->tx_pipe);
+
+	if (glink->rx_pipe->reset)
+		glink->rx_pipe->reset(glink->rx_pipe);
+}
+
 static void qcom_glink_send_read_notify(struct qcom_glink *glink)
 {
 	struct glink_msg msg;
@@ -559,7 +573,7 @@ static void qcom_glink_handle_intent_req_ack(struct qcom_glink *glink,
 	WRITE_ONCE(channel->intent_req_result, granted);
 	wake_up_all(&channel->intent_req_wq);
 	channel->intent_timeout_count = 0;
-	CH_INFO(channel, "\n");
+	CH_INFO(channel, "granted:%d\n", granted);
 	qcom_glink_channel_ref_put(channel);
 }
 
@@ -648,6 +662,7 @@ static void qcom_glink_send_close_ack(struct qcom_glink *glink,
 	req.param2 = 0;
 
 	GLINK_INFO(glink->ilc, "rcid:%d\n", channel->rcid);
+	complete_all(&channel->close_ack);
 	qcom_glink_tx(glink, &req, sizeof(req), NULL, 0, true);
 }
 
@@ -778,6 +793,13 @@ int qcom_glink_rx_done(struct rpmsg_endpoint *ept, void *data)
 }
 EXPORT_SYMBOL_GPL(qcom_glink_rx_done);
 
+void qcom_glink_native_set_rx_wakeup(struct qcom_glink *glink, bool enable)
+{
+	if (glink)
+		glink->rx_wakeup = enable;
+}
+EXPORT_SYMBOL_GPL(qcom_glink_native_set_rx_wakeup);
+
 /**
  * qcom_glink_receive_version() - receive version/features from remote system
  *
@@ -858,7 +880,7 @@ static int qcom_glink_send_intent_req_ack(struct qcom_glink *glink,
 	msg.param1 = cpu_to_le16(channel->lcid);
 	msg.param2 = cpu_to_le32(granted);
 
-	CH_INFO(channel, "\n");
+	CH_INFO(channel, "granted:%d\n", granted);
 	qcom_glink_tx(glink, &msg, sizeof(msg), NULL, 0, true);
 
 	return 0;
@@ -1237,6 +1259,7 @@ out:
 	spin_unlock(&channel->recv_lock);
 
 	wake_up_interruptible(&channel->rx_wq);
+	channel->buf = NULL;
 }
 
 static int qcom_glink_rx_data(struct qcom_glink *glink, size_t avail, unsigned int iters)
@@ -1480,12 +1503,20 @@ static void qcom_glink_handle_intent(struct qcom_glink *glink,
 				intent->id, intent->id + 1, GFP_ATOMIC);
 		spin_unlock_irqrestore(&channel->intent_lock, flags);
 
-		if (ret < 0)
+		if (ret < 0) {
 			dev_err(glink->dev, "failed to store remote intent\n");
-	}
+			kfree(intent);
+		}
 
-	WRITE_ONCE(channel->intent_received, true);
-	wake_up_all(&channel->intent_req_wq);
+		/*
+		 * Wake up the intent request thread regardless of whether
+		 * idr_alloc succeeded or failed. On failure the sender can
+		 * immediately re-queue the request instead of waiting for
+		 * the full intent-request timeout to expire.
+		 */
+		WRITE_ONCE(channel->intent_received, true);
+		wake_up_all(&channel->intent_req_wq);
+	}
 
 	kfree(msg);
 	qcom_glink_rx_advance(glink, ALIGN(msglen, 8));
@@ -1505,6 +1536,7 @@ static int qcom_glink_rx_open_ack(struct qcom_glink *glink, unsigned int lcid)
 
 	CH_INFO(channel, "\n");
 	complete_all(&channel->open_ack);
+	reinit_completion(&channel->close_ack);
 	qcom_glink_channel_ref_put(channel);
 	return 0;
 }
@@ -1615,7 +1647,7 @@ void qcom_glink_native_rx(struct qcom_glink *glink)
 	int retry = 0;
 	int ret = 0;
 
-	if (should_wake) {
+	if (should_wake && glink->rx_wakeup) {
 		dev_dbg(glink->dev, "%s: wakeup\n", __func__);
 		glink_resume_pkt = true;
 		should_wake = false;
@@ -1746,6 +1778,12 @@ static int qcom_glink_create_remote(struct qcom_glink *glink,
 
 	CH_INFO(channel, "\n");
 
+	ret = wait_for_completion_timeout(&channel->close_ack, msecs_to_jiffies(10));
+	if (!ret) {
+		ret = -ETIMEDOUT;
+		goto close_timeout;
+	}
+
 	ret = qcom_glink_send_open_req(glink, channel);
 	if (ret)
 		goto close_link;
@@ -1768,6 +1806,8 @@ close_link:
 	 * by calling qcom_glink_native_remove().
 	 */
 	qcom_glink_send_close_req(glink, channel);
+close_timeout:
+	CH_INFO(channel, "close_link timeout%d\n", ret);
 
 	return ret;
 }
@@ -1941,6 +1981,7 @@ static int qcom_glink_request_intent(struct qcom_glink *glink,
 		goto unlock;
 
 	ret = wait_event_timeout(channel->intent_req_wq,
+				READ_ONCE(channel->intent_req_result) == 0 ||
 				 (READ_ONCE(channel->intent_req_result) >= 0 &&
 				 READ_ONCE(channel->intent_received)) ||
 				 glink->abort_tx,
@@ -1954,8 +1995,10 @@ static int qcom_glink_request_intent(struct qcom_glink *glink,
 			GLINK_BUG(glink->ilc,
 				"remoteproc:%s channel:%s unresponsive\n",
 				glink->name, channel->name);
+	} else if (glink->abort_tx) {
+		ret = -ECANCELED;
 	} else {
-		ret = READ_ONCE(channel->intent_req_result) ? 0 : -ECANCELED;
+		ret = READ_ONCE(channel->intent_req_result) ? 0 : -EAGAIN;
 	}
 
 unlock:
@@ -2493,6 +2536,8 @@ struct qcom_glink *qcom_glink_native_probe(struct device *dev,
 	glink->features = features;
 	glink->intentless = intentless;
 
+	glink->rx_wakeup = true;
+
 	spin_lock_init(&glink->tx_lock);
 	spin_lock_init(&glink->rx_lock);
 	INIT_LIST_HEAD(&glink->rx_queue);
@@ -2591,6 +2636,7 @@ void qcom_glink_native_remove(struct qcom_glink *glink)
 
 	kthread_flush_worker(&glink->kworker);
 	kthread_stop(glink->task);
+	qcom_glink_pipe_reset(glink);
 }
 EXPORT_SYMBOL_GPL(qcom_glink_native_remove);
 

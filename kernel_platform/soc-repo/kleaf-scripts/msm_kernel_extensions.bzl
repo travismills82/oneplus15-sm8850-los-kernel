@@ -1,7 +1,7 @@
 load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
-#load("//soc-repo/arch/arm64/boot/dts/vendor:qcom/platform_map.bzl", _get_dtb_list = "get_dtb_list", _get_dtbo_list = "get_dtbo_list")
+#load("//vendor/oneplus/sm8850-devicetrees:qcom/platform_map.bzl", _get_custom_dtbo_img_list = "get_custom_dtbo_img_list", _get_dtb_list = "get_dtb_list", _get_dtbo_list = "get_dtbo_list")
 #oplus devicetree overylay use oplus dir
-load("//soc-repo/arch/arm64/boot/dts/vendor:oplus/platform_map.bzl", _get_dtb_list = "get_dtb_list", _get_dtbo_list = "get_dtbo_list")
+load("//vendor/oneplus/sm8850-devicetrees:oplus/platform_map.bzl", _get_custom_dtbo_img_list = "get_custom_dtbo_img_list", _get_dtb_list = "get_dtb_list", _get_dtbo_list = "get_dtbo_list")
 
 def define_top_level_rules():
     for skippable in ["abl", "dtc", "abi"]:
@@ -20,6 +20,9 @@ def define_top_level_rules():
 def define_combined_vm_image(target, variant, vm_size_ext4):
     return
 
+def export_init_boot_prebuilt(target, variant):
+    return
+
 def define_extras(target, kbuild_config, flavor = None, alias = None):
     return
 
@@ -32,11 +35,11 @@ def get_dtb_list(target):
 def get_dtbo_list(target):
     return _get_dtbo_list(target)
 
+def get_custom_dtbo_img_list(target):
+    return _get_custom_dtbo_img_list(target)
+
 def get_dtstree(target):
-    return "//soc-repo/arch/arm64/boot/dts/vendor:msm_dt"
+    return "//vendor/oneplus/sm8850-devicetrees:msm_dt"
 
 def get_vendor_ramdisk_binaries(target, flavor = None):
-    return None
-
-def get_gki_ramdisk_prebuilt_binary():
     return None

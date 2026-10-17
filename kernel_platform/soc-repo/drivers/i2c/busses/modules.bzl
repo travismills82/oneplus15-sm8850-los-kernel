@@ -1,3 +1,5 @@
+load(":soc_repo_path.bzl", "SOC_MODULES_REPO_PATH")
+
 def register_modules(registry):
     registry.register(
         name = "drivers/i2c/busses/i2c-msm-geni",
@@ -24,6 +26,8 @@ def register_modules(registry):
             "drivers/virt/gunyah/gh_msgq",
             "drivers/virt/gunyah/gh_dbl",
             "arch/arm64/gunyah/gh_arm_drv",
+            "//{}/oplus/kernel/device_info/device_info/bazel:device_info".format(SOC_MODULES_REPO_PATH),
+            "//{}/oplus/kernel/boot:oplus_bsp_bootmode".format(SOC_MODULES_REPO_PATH),
         ],
         local_defines = [
             "OPLUS_FEATURE_CHG_BASIC"
@@ -31,7 +35,7 @@ def register_modules(registry):
     )
 
     registry.register(
-        name = "drivers/i2c/busses/i2c-qcom-geni-msm.c",
+        name = "drivers/i2c/busses/i2c-qcom-geni-msm",
         out = "i2c-qcom-geni-msm.ko",
         config = "CONFIG_I2C_QCOM_GENI_MSM",
         srcs = [
@@ -66,5 +70,19 @@ def register_modules(registry):
         deps = [
             # do not sort
             "drivers/dma/qcom/gpi",
+        ],
+    )
+
+    registry.register(
+        name = "drivers/i2c/busses/i2c-virtio",
+        out = "i2c-virtio.ko",
+        config = "CONFIG_I2C_VIRTIO",
+        srcs = [
+            # do not sort
+            "drivers/i2c/busses/i2c-virtio.c",
+        ],
+        deps = [
+            # do not sort
+            "drivers/virtio/virtio_mmio",
         ],
     )

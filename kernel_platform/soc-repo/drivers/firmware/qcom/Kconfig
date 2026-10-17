@@ -10,9 +10,34 @@ config QCOM_SCM
 	select QCOM_TZMEM
 	tristate
 
+config QCOM_TZMEM_FFA
+	bool "QCOM TZMEM FFA support"
+	depends on QCOM_TZMEM && ARM_FFA_TRANSPORT
+	default n
+	help
+	  This option enables support for QCOM TZMEM FFA.
+
+	  This feature config enable FFA support in qcom_tzmem driver.
+	  Please note, FFA memory sharing is different aspect compared to older
+	  older method of plugging feature via scm calls.
+	  With this, traditional method of memory sharing will be replaced with
+	  FFA based implementation.
+
+config QCOM_TZMEM_LOW_MEMORY
+	bool "Enable low memory mode for QCOM TZMEM"
+	depends on QCOM_TZMEM
+	default n
+	help
+	  This option enables low-memory behavior for qcom_tzmem users.
+	  When enabled, smaller pool sizes are used in initialization
+	  paths(like scm and shmbridge), and runtime fallback allocation from qcom_tzmem
+	  is disabled once the pool memory is exhausted.
+
+	  Say 'Y' here for low-memory targets (QTVM, for example).
+
 config QTEE_SHM_BRIDGE
 	bool "QTI TEE shared memory bridge"
-	depends on QCOM_SCM
+	depends on QCOM_SCM && QCOM_TZMEM
 	default y if QCOM_SCM
 	help
 	  QTEE shared memory bridge driver provides kernel APIs to share
@@ -64,6 +89,30 @@ config QCOM_QSEECOM_UEFISECAPP
 
 	  Select Y here to provide access to EFI variables on the aforementioned
 	  platforms.
+
+config QCOM_SCM_SMCI
+	tristate "Qualcomm SMC Invoke Support"
+	depends on QCOM_SCM
+	depends on QCOM_SI_CORE
+	help
+	  Various Qualcomm SoCs have a Trusted Execution Environment (TEE) running
+	  in the Trust Zone. This module provides an interface to that via the
+	  capability based object invocation, using SI-CORE.
+
+	  Enable SCM_SMCI driver which supports capability based secure
+	  communication between QTEE and VM. Using SCM_SMCI, kernel can
+	  issue calls to QTEE or TAs to request a service or exposes services
+	  to QTEE and TAs. The SCM_SMCI implements the necessary marshaling of
+	  messages with QTEE.
+
+config PKVM_SECURE_MEMORY_MANAGER
+	tristate "PKVM SecureMemory Manager"
+	help
+	  This driver implements secure memory management for protected KVM
+	  (pKVM) on Qualcomm platforms. It queries TrustZone for secure memory
+	  region descriptors and loads an EL2 module to unmap those secure
+	  regions from the Host stage-2 page tables, preventing host access to
+	  hypervisor-protected memory.
 
 source "$(KCONFIG_EXT_PREFIX)drivers/firmware/qcom/si_core/Kconfig"
 

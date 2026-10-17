@@ -8,6 +8,14 @@
 #include "hab_virq.h"
 
 #define MAX_LINE_SIZE 128
+#define MAX_CMD_LEN                32
+#define PCHAN_RX_PENDING_SZ_MIN    4096
+#define VCHAN_RX_PENDING_CNT_MIN   100
+#define SSCANF_PCHAN_ARGS_COUNT    3
+#define KSTRTOUL_BASE_DECIMAL      10
+#define PIPE_DUMP_FILE_PATH_LEN    256
+#define PIPE_DUMP_FILE_TIME_LEN    100
+#define PIPE_DUMP_SEPARATOR_LEN    8
 
 int hab_stat_init(struct hab_driver *driver)
 {
@@ -41,9 +49,11 @@ int hab_stat_buffer_print(char *dest,
 int hab_stat_show_vchan(struct hab_driver *driver,
 		char *buf, int size)
 {
-	int i, ret = 0;
+	int i, ret;
 
 	ret = strscpy(buf, "", size);
+	ret = hab_stat_buffer_print(buf, size, "global vc r_pcntmax %d:\n",
+		hab_driver.vchan_rx_pending_cnt_max);
 	for (i = 0; i < driver->ndevices; i++) {
 		struct hab_device *dev = &driver->devp[i];
 		struct physical_channel *pchan;
@@ -51,30 +61,101 @@ int hab_stat_show_vchan(struct hab_driver *driver,
 
 		read_lock_bh(&dev->pchan_lock);
 		list_for_each_entry(pchan, &dev->pchannels, node) {
-			if (!pchan->vcnt)
-				continue;
-
 			ret = hab_stat_buffer_print(buf, size,
-				"nm %s r %d lc %d rm %d sq_t %d sq_r %d st 0x%x vn %d:\n",
+				"nm %s r %d lc %d rm %d sq_t %d sq_r %d st 0x%x vn %d ",
 				pchan->name, pchan->is_be, pchan->vmid_local,
 				pchan->vmid_remote, pchan->sequence_tx,
 				pchan->sequence_rx, pchan->status, pchan->vcnt);
 
-			read_lock(&pchan->vchans_lock);
+			ret = hab_stat_buffer_print(buf, size,
+				"r_pcnt %d r_psz %d r_pszp %d r_pszmax %d:\n",
+				atomic_read(&pchan->rx_pending_cnt),
+				atomic_read(&pchan->rx_pending_sz),
+				pchan->rx_pending_sz_peak, pchan->rx_pending_sz_max);
+
+			read_lock_bh(&pchan->vchans_lock);
 			list_for_each_entry(vc, &pchan->vchannels, pnode) {
 				ret = hab_stat_buffer_print(buf, size,
-					"%08X(%d:%d:%d:%ld:%ld:%d) ", vc->id,
+					"%08X(%d:%d:%d:%ld:%ld:%d:%d:%d:%d) ", vc->id,
 					get_refcnt(vc->refcount),
 					vc->otherend_closed,
 					vc->closed,
 					atomic64_read(&vc->tx_cnt),
 					atomic64_read(&vc->rx_cnt),
+					vc->rx_pending_cnt,
+					vc->rx_pending_cnt_peak,
+					vc->rx_pending_sz,
 					vc->rx_inflight);
 			}
 			ret = hab_stat_buffer_print(buf, size, "\n");
-			read_unlock(&pchan->vchans_lock);
+			read_unlock_bh(&pchan->vchans_lock);
 		}
 		read_unlock_bh(&dev->pchan_lock);
+	}
+
+	return ret;
+}
+
+int hab_stat_store_rx_pending(const char *buf, int size)
+{
+	int ret;
+	char cmd[MAX_CMD_LEN] = {0};
+	int consumed = 0;
+	const char *p = buf;
+	uint32_t vmid = 0, mmid = 0, new_limit = 0;
+	unsigned long val = 0;
+	struct hab_device *dev;
+	struct physical_channel *pchan;
+
+	/* read first token as command type */
+	ret = sscanf(p, "%31s%n", cmd, &consumed);
+	if (ret != 1) {
+		pr_err("unsupported cmd, 'pchan_rx_pending_sz' or 'vchan_rx_pending_cnt'\n");
+		return -EINVAL;
+	}
+
+	p += consumed;
+	/* there should be one and only one space between cmd and args */
+	if (*p == ' ') {
+		p++;
+	}
+
+	if (!strcmp(cmd, "pchan_rx_pending_sz")) {
+		ret = sscanf(p, "%u %u %u", &vmid, &mmid, &new_limit);
+		if (ret != SSCANF_PCHAN_ARGS_COUNT) {
+			pr_err("failed to parse input, expect 3 numbers %d\n", ret);
+			ret = -EINVAL;
+		} else if (new_limit < PCHAN_RX_PENDING_SZ_MIN) {
+			pr_err("new limit is too low %u\n", new_limit);
+			ret = -EINVAL;
+		} else {
+			dev = find_hab_device(mmid);
+			if (dev == NULL) {
+				pr_err("HAB device %d is not initialized\n", mmid);
+				return -EINVAL;
+			}
+			pchan = hab_pchan_find_domid(dev, vmid);
+			if (pchan == NULL) {
+				pr_err("hab_pchan_find_domid failed: vmid=%d\n", vmid);
+				return -EINVAL;
+			}
+			pchan->rx_pending_sz_max = new_limit;
+
+			hab_pchan_put(pchan);
+		}
+	} else if (!strcmp(cmd, "vchan_rx_pending_cnt")) {
+		ret = kstrtoul(p, KSTRTOUL_BASE_DECIMAL, &val);
+		if (ret) {
+			pr_err("invalid number for vchan_rx_pending_cnt: ret=%d\n", ret);
+			return -EINVAL;
+		}
+		if (val < VCHAN_RX_PENDING_CNT_MIN || val > INT_MAX) {
+			pr_err("vchan_rx_pending_cnt must be in [100, %u]\n", INT_MAX);
+			return -EINVAL;
+		}
+		WRITE_ONCE(hab_driver.vchan_rx_pending_cnt_max, (int)val);
+	} else {
+		pr_err("unsupported cmd, expect 'pchan_rx_pending_sz' or 'vchan_rx_pending_cnt'\n");
 	}
 
 	return ret;
@@ -83,7 +164,7 @@ int hab_stat_show_vchan(struct hab_driver *driver,
 int hab_stat_show_ctx(struct hab_driver *driver,
 		char *buf, int size)
 {
-	int ret = 0;
+	int ret;
 	struct uhab_context *ctx;
 	struct virq_uhab_context *virq_ctx;
 
@@ -141,41 +222,60 @@ static int print_ctx_total_expimp(struct uhab_context *ctx,
 
 	read_lock(&ctx->exp_lock);
 	list_for_each_entry(export, &ctx->exp_whse, node) {
-		pfn_table =	(struct compressed_pfns *)export->payload;
-		exim_size = get_pft_tbl_total_size(pfn_table);
-		exp_total += exim_size;
-		exp_cnt++;
+		exp_super = container_of(export, struct export_desc_super, exp);
+		if (!exp_super->is_loopback) {
+			pfn_table =	(struct compressed_pfns *)export->payload;
+			exim_size = get_pft_tbl_total_size(pfn_table);
+			exp_total += exim_size;
+			exp_cnt++;
+		} else {
+			exim_size = PAGE_SIZE * export->payload_count;
+			exp_total += exim_size;
+			exp_cnt++;
+		}
 	}
 	read_unlock(&ctx->exp_lock);
 
 	spin_lock_bh(&ctx->imp_lock);
 	hab_rb_for_each_entry(exp_super, exp_super_tmp, &ctx->imp_whse, node) {
 		export = &exp_super->exp;
-		if (habmm_imp_hyp_map_check(ctx->import_ctx, export)) {
+		if (!exp_super->is_loopback && habmm_imp_hyp_map_check(ctx->import_ctx, export)) {
 			pfn_table =	(struct compressed_pfns *)export->payload;
 			exim_size = get_pft_tbl_total_size(pfn_table);
+			imp_total += exim_size;
+			imp_cnt++;
+		} else if (exp_super->is_loopback) {
+			exim_size = PAGE_SIZE * export->payload_count;
 			imp_total += exim_size;
 			imp_cnt++;
 		}
 	}
 	spin_unlock_bh(&ctx->imp_lock);
 
-	if (exp_cnt || exp_total || imp_cnt || imp_total)
+	if (exp_cnt || exp_total || imp_cnt || imp_total) {
 		ret = hab_stat_buffer_print(buf, size,
 				"ctx %d exp %d size %d imp %d size %d\n",
 				ctx->owner, exp_cnt, exp_total,
 				imp_cnt, imp_total);
-	else
+	} else {
 		return 0;
+	}
 
 	read_lock(&ctx->exp_lock);
 	ret = hab_stat_buffer_print(buf, size, "export[expid:vcid:size]: ");
 	list_for_each_entry(export, &ctx->exp_whse, node) {
-		pfn_table =	(struct compressed_pfns *)export->payload;
-		exim_size = get_pft_tbl_total_size(pfn_table);
-		ret = hab_stat_buffer_print(buf, size,
-			"[%d:%x:%d] ", export->export_id,
-			export->vcid_local, exim_size);
+		exp_super = container_of(export, struct export_desc_super, exp);
+		if (!exp_super->is_loopback) {
+			pfn_table = (struct compressed_pfns *)export->payload;
+			exim_size = get_pft_tbl_total_size(pfn_table);
+			ret = hab_stat_buffer_print(buf, size,
+				"[%d:%x:%d] ", export->export_id,
+				export->vcid_local, exim_size);
+		} else {
+			ret = hab_stat_buffer_print(buf, size,
+				"[*%d:%x:%d] ", export->export_id,
+				export->vcid_local, export->payload_count * PAGE_SIZE);
+		}
 	}
 	ret = hab_stat_buffer_print(buf, size, "\n");
 	read_unlock(&ctx->exp_lock);
@@ -184,12 +284,18 @@ static int print_ctx_total_expimp(struct uhab_context *ctx,
 	ret = hab_stat_buffer_print(buf, size, "import[expid:vcid:size]: ");
 	hab_rb_for_each_entry(exp_super, exp_super_tmp, &ctx->imp_whse, node) {
 		export = &exp_super->exp;
-		if (habmm_imp_hyp_map_check(ctx->import_ctx, export)) {
-			pfn_table =	(struct compressed_pfns *)export->payload;
-			exim_size = get_pft_tbl_total_size(pfn_table);
+		if (likely(!exp_super->is_loopback)) {
+			if (habmm_imp_hyp_map_check(ctx->import_ctx, export)) {
+				pfn_table =	(struct compressed_pfns *)export->payload;
+				exim_size = get_pft_tbl_total_size(pfn_table);
+				ret = hab_stat_buffer_print(buf, size,
+					"[%d:%x:%d] ", export->export_id,
+					export->vcid_local, exim_size);
+			}
+		} else {
 			ret = hab_stat_buffer_print(buf, size,
-				"[%d:%x:%d] ", export->export_id,
-				export->vcid_local, exim_size);
+				"[*%d:%x:%d] ", export->export_id,
+				export->vcid_local, export->payload_count * PAGE_SIZE);
 		}
 	}
 	ret = hab_stat_buffer_print(buf, size, "\n");
@@ -296,13 +402,13 @@ static int pipedump_idx;
 int dump_hab_open(void)
 {
 	int rc = 0;
-	char file_path[256];
-	char file_time[100];
+	char file_path[PIPE_DUMP_FILE_PATH_LEN];
+	char file_time[PIPE_DUMP_FILE_TIME_LEN];
 
 	rc = dump_hab_get_file_name(file_time, sizeof(file_time));
-	strscpy(file_path, HAB_PIPE_DUMP_FILE_NAME, sizeof(file_path));
-	strlcat(file_path, file_time, sizeof(file_path));
-	strlcat(file_path, HAB_PIPE_DUMP_FILE_EXT, sizeof(file_path));
+	(void)strscpy(file_path, HAB_PIPE_DUMP_FILE_NAME, sizeof(file_path));
+	(void)strlcat(file_path, file_time, sizeof(file_path));
+	(void)strlcat(file_path, HAB_PIPE_DUMP_FILE_EXT, sizeof(file_path));
 
 	filp = vmalloc(HAB_PIPEDUMP_SIZE);
 	if (IS_ERR(filp)) {
@@ -312,7 +418,7 @@ int dump_hab_open(void)
 	} else {
 		pr_info("hab pipe dump buffer opened %s\n", file_path);
 		pipedump_idx = 0;
-		dump_hab_buf(file_path, strlen(file_path)); /* id first */
+		(void)dump_hab_buf(file_path, strlen(file_path)); /* id first */
 	}
 	return rc;
 }
@@ -341,10 +447,10 @@ int dump_hab_buf(void *buf, int size)
 void dump_hab(int mmid)
 {
 	struct physical_channel *pchan = NULL;
-	int i = 0;
-	char str[8] = {35, 35, 35, 35, 35, 35, 35, 35}; /* ## */
+	int i;
+	char str[PIPE_DUMP_SEPARATOR_LEN] = {35, 35, 35, 35, 35, 35, 35, 35}; /* ## */
 
-	dump_hab_open();
+	(void)dump_hab_open();
 	for (i = 0; i < hab_driver.ndevices; i++) {
 		struct hab_device *habdev = &hab_driver.devp[i];
 
@@ -357,7 +463,7 @@ void dump_hab(int mmid)
 					break;
 				}
 			}
-			dump_hab_buf(str, 8); /* separator */
+			(void)dump_hab_buf(str, PIPE_DUMP_SEPARATOR_LEN); /* separator */
 		}
 	}
 	dev_coredumpv(hab_driver.dev[mmid / 100], filp, pipedump_idx, GFP_KERNEL);

@@ -6,7 +6,7 @@
  *
  * Author: Will Deacon <will.deacon@arm.com>
  *
- * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  */
 
 #ifndef _ARM_SMMU_H
@@ -26,6 +26,7 @@
 #include <linux/types.h>
 #include <linux/qcom-iommu-util.h>
 #include <linux/qcom-io-pgtable.h>
+#include <linux/genalloc.h>
 
 /* Configuration registers */
 #define ARM_SMMU_GR0_sCR0		0x0
@@ -508,6 +509,7 @@ struct arm_smmu_domain {
 	struct arm_smmu_mapping_cfg	mapping_cfg;
 	bool				delayed_s1_trans_enable;
 	u32				secure_vmid;
+	struct gen_pool			*secure_mem_pool;
 	fault_handler_irq_t		fault_handler_irq;
 	void				*handler_irq_token;
 
@@ -520,6 +522,8 @@ struct arm_smmu_domain {
 	bool				deferred_flush;
 
 	struct iommu_domain		domain;
+	struct qcom_io_pgtable_info	pgtbl_info;
+	enum io_pgtable_fmt		pgtbl_fmt;
 	/* mapping_cfg.atomic indicates that runtime power management should be disabled. */
 	bool				rpm_always_on;
 	/* skip tlb management. */
@@ -717,7 +721,14 @@ static inline void arm_smmu_writeq(struct arm_smmu_device *smmu, int page,
 	arm_smmu_writeq((s), ARM_SMMU_CB((s), (n)), (o), (v))
 
 struct arm_smmu_device *arm_smmu_impl_init(struct arm_smmu_device *smmu);
+#if IS_ENABLED(CONFIG_ARM_SMMU_NVIDIA)
 struct arm_smmu_device *nvidia_smmu_impl_init(struct arm_smmu_device *smmu);
+#else
+static inline struct arm_smmu_device *nvidia_smmu_impl_init(struct arm_smmu_device *smmu)
+{
+	return smmu;
+}
+#endif
 struct arm_smmu_device *qcom_smmu_impl_init(struct arm_smmu_device *smmu);
 struct arm_smmu_device *qsmmuv500_impl_init(struct arm_smmu_device *smmu);
 struct arm_smmu_device *qsmmuv2_impl_init(struct arm_smmu_device *smmu);

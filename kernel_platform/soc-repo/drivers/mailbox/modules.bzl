@@ -35,3 +35,13 @@ def register_modules(registry):
             "drivers/mailbox/qcom-ipcc.c",
         ],
     )
+
+    registry.register(
+        name = "drivers/mailbox/qcom-apcs-ipc-mailbox",
+        out = "qcom-apcs-ipc-mailbox.ko",
+        config = "CONFIG_QCOM_APCS_IPC",
+        srcs = [
+            # do not sort
+            "drivers/mailbox/qcom-apcs-ipc-mailbox.c",
+        ],
+    )

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2021-2025, Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  */
 
 #define pr_fmt(fmt)	"eusb2_phy: %s: " fmt, __func__
@@ -151,8 +151,9 @@
 #define USB_HSPHY_1P2_HPM_LOAD		5905	/* uA */
 #define USB_HSPHY_VDD_HPM_LOAD		7757	/* uA */
 
-/* Maximum power domains */
-#define MIN_PD				2
+#define UTXR				0 /* USB Trasnfer */
+#define UCORE				1 /* USB Core */
+#define MIN_PD				2 /* Minimum power domains */
 
 struct msm_eusb2_phy {
 	struct usb_phy		phy;
@@ -197,6 +198,7 @@ struct msm_eusb2_phy {
 	bool			fw_managed_pwr;
 	int			pd_count;
 	struct device		**pd_devs;
+	bool			pd_refcnt[MIN_PD];
 };
 
 static void msm_eusb2_phy_modeled_domain_detach(struct msm_eusb2_phy *phy)
@@ -239,6 +241,8 @@ static int msm_eusb2_phy_modeled_domain_attach(struct msm_eusb2_phy *phy)
 		if (IS_ERR(phy->pd_devs[i]))
 			goto pd_err;
 	}
+	phy->pd_refcnt[UCORE] = false;
+	phy->pd_refcnt[UTXR] = false;
 	return 0;
 
 pd_err:
@@ -249,16 +253,30 @@ pd_err:
 /* d3_to_d0 transition by turning on all the suppliers */
 static int msm_eusb2_phy_modeled_d3_to_d0(struct msm_eusb2_phy *phy)
 {
-	int ret;
+	int ret = 0;
 
 	if (!phy->fw_managed_pwr)
 		return 0;
 
-	ret = pm_runtime_resume_and_get(phy->pd_devs[0]);
-	if (ret)
-		return ret;
+	if (!phy->pd_refcnt[UTXR]) {
+		ret = pm_runtime_resume_and_get(phy->pd_devs[UTXR]);
+		if (ret) {
+			dev_err(phy->phy.dev, "Failed to resume transfer pd\n");
+			return ret;
+		}
+		phy->pd_refcnt[UTXR] = true;
+	}
 
-	ret = pm_runtime_resume_and_get(phy->pd_devs[1]);
+	if (!phy->pd_refcnt[UCORE]) {
+		ret = pm_runtime_resume_and_get(phy->pd_devs[UCORE]);
+		if (ret) {
+			dev_err(phy->phy.dev, "Failed to resume core pd\n");
+			pm_runtime_put_sync(phy->pd_devs[UTXR]);
+			phy->pd_refcnt[UTXR] = false;
+			return ret;
+		}
+		phy->pd_refcnt[UCORE] = true;
+	}
 
 	return ret;
 }
@@ -269,8 +287,15 @@ static void msm_eusb2_phy_modeled_d0_to_d3(struct msm_eusb2_phy *phy)
 	if (!phy->fw_managed_pwr)
 		return;
 
-	pm_runtime_put_sync(phy->pd_devs[0]);
-	pm_runtime_put_sync(phy->pd_devs[1]);
+	if (phy->pd_refcnt[UTXR]) {
+		pm_runtime_put_sync(phy->pd_devs[UTXR]);
+		phy->pd_refcnt[UTXR] = false;
+	}
+
+	if (phy->pd_refcnt[UCORE]) {
+		pm_runtime_put_sync(phy->pd_devs[UCORE]);
+		phy->pd_refcnt[UCORE] = false;
+	}
 }
 
 /* d0_to_d1 transition by turning off all the suppliers */
@@ -279,7 +304,11 @@ static void msm_eusb2_phy_modeled_d0_to_d1(struct msm_eusb2_phy *phy)
 	if (!phy->fw_managed_pwr)
 		return;
 
-	pm_runtime_put_sync(phy->pd_devs[0]);
+	if (phy->pd_refcnt[UTXR]) {
+		pm_runtime_put_sync(phy->pd_devs[UTXR]);
+		phy->pd_refcnt[UTXR] = false;
+	}
+
 }
 
 static inline bool is_eud_debug_mode_active(struct msm_eusb2_phy *phy)
@@ -751,9 +780,6 @@ static int msm_eusb2_repeater_reset_and_init(struct msm_eusb2_phy *phy)
 {
 	int ret;
 
-	if (phy->fw_managed_pwr)
-		return 0;
-
 	if (phy->ur)
 		phy->ur->flags = phy->phy.flags;
 
@@ -880,6 +906,12 @@ static int msm_eusb2_phy_set_suspend(struct usb_phy *uphy, int suspend)
 
 	if (phy->suspended && suspend) {
 		dev_dbg(uphy->dev, "USB PHY is already suspended\n");
+		return 0;
+	}
+
+	if (phy->fw_managed_pwr && suspend == PHY_FORCE_SUSPEND) {
+		pm_runtime_force_suspend(phy->pd_devs[UTXR]);
+		pm_runtime_force_suspend(phy->pd_devs[UCORE]);
 		return 0;
 	}
 
@@ -1027,17 +1059,15 @@ static int msm_eusb2_phy_probe(struct platform_device *pdev)
 	phy = devm_kzalloc(dev, sizeof(*phy), GFP_KERNEL);
 	if (!phy) {
 		ret = -ENOMEM;
-		goto err_ret;
+		return ret;
 	}
 
 	phy->phy.dev = dev;
 
-	if (!(of_device_is_compatible(dev->of_node, "qcom,usb-snps-eusb2-fw-managed"))) {
-		ur = devm_usb_get_repeater_by_phandle(dev, "usb-repeater", 0);
-		if (IS_ERR(ur)) {
-			ret = PTR_ERR(ur);
-			goto err_ret;
-		}
+	ur = devm_usb_get_optional_repeater_by_phandle(dev, "usb-repeater", 0);
+	if (IS_ERR(ur)) {
+		ret = PTR_ERR(ur);
+		goto err_ret;
 	}
 
 	res = platform_get_resource_byname(pdev, IORESOURCE_MEM,
@@ -1085,10 +1115,10 @@ static int msm_eusb2_phy_probe(struct platform_device *pdev)
 		}
 	} else {
 
-		phy->ref_clk = devm_clk_get(dev, "ref_clk");
-		if (IS_ERR(phy->ref_clk)) {
-			dev_err(dev, "clk get failed for ref_clk\n");
-			ret = PTR_ERR(phy->ref_clk);
+		phy->ref_clk_src = devm_clk_get(dev, "ref_clk_src");
+		if (IS_ERR(phy->ref_clk_src)) {
+			dev_err(dev, "clk get failed for ref_clk_src\n");
+			ret = PTR_ERR(phy->ref_clk_src);
 			goto err_ret;
 		}
 
@@ -1168,10 +1198,6 @@ static int msm_eusb2_phy_probe(struct platform_device *pdev)
 	phy->phy.set_power		= msm_eusb2_phy_set_power;
 	phy->phy.type			= USB_PHY_TYPE_USB2;
 
-	ret = usb_add_phy_dev(&phy->phy);
-	if (ret)
-		goto err_ret;
-
 	INIT_WORK(&phy->vbus_draw_work, msm_eusb2_phy_vbus_draw_work);
 	msm_eusb2_phy_create_debugfs(phy);
 
@@ -1186,6 +1212,11 @@ static int msm_eusb2_phy_probe(struct platform_device *pdev)
 		msm_eusb2_phy_clocks(phy, true);
 		msm_eusb2_repeater_reset_and_init(phy);
 	}
+
+	/* Placed at the end to ensure the probe is complete */
+	ret = usb_add_phy_dev(&phy->phy);
+	if (ret)
+		goto err_ret;
 
 	return 0;
 

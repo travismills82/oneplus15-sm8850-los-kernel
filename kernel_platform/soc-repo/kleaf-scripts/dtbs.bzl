@@ -1,14 +1,39 @@
+load(":soc_repo_path.bzl", "SOC_MODULES_REPO_PATH")
 load("@bazel_skylib//rules:write_file.bzl", "write_file")
-load(":kleaf-scripts/msm_kernel_extensions.bzl", "get_dtb_list", "get_dtbo_list", "get_dtstree")
+load(":kleaf-scripts/msm_kernel_extensions.bzl", "get_custom_dtbo_img_list", "get_dtb_list", "get_dtbo_list", "get_dtstree")
+load("//build/kernel/kleaf:hermetic_tools.bzl", "hermetic_genrule")
 load("//build/kernel/kleaf:kernel.bzl", "kernel_build", "kernel_build_config")
 
 def define_qcom_dtb_setup():
+    native.filegroup(name = "empty_dtbo_config")
+
+    native.label_flag(
+        name = "dtbo_config",
+        build_setting_default = ":empty_dtbo_config",
+    )
+
+    native.config_setting(
+        name = "dtbo_config_unset",
+        flag_values = {":dtbo_config": ":empty_dtbo_config"},
+    )
+
+    hermetic_genrule(
+        name = "kconfig.dtb.generated",
+        srcs = [
+            ":kconfig.msm.generated",
+            "//{}/oplus/bazel:kconfig.oplus.generated".format(SOC_MODULES_REPO_PATH),
+            "//{}/oplus/kernel/charger/bazel:kconfig.oplus_chg.generated".format(SOC_MODULES_REPO_PATH),
+        ],
+        outs = ["dtb/Kconfig.ext"],
+        cmd = "cat $(SRCS) >$@",
+    )
+
     write_file(
         name = "dtb_build_config",
         out = "build.config.qcom.dtbs",
         content = [
             "KERNEL_DIR=common",
-            "SOC_DIR=soc-repo",
+            "SOC_DIR={}".format(native.package_name()),
             "export DTC_INCLUDE=${ROOT_DIR}/${SOC_DIR}/include",
             "BOOT_IMAGE_HEADER_VERSION=4",
             "BUILD_INIT_BOOT_IMG=1",
@@ -64,6 +89,7 @@ def define_qcom_dtbs(
 
     dtb_list = get_dtb_list(target)
     dtbo_list = get_dtbo_list(target)
+    custom_dtbo_img_list = get_custom_dtbo_img_list(target)
 
     kernel_build(
         name = "{}_dtb_build".format(stem),
@@ -76,7 +102,7 @@ def define_qcom_dtbs(
         dtstree = get_dtstree(target),
         outs = dtb_list + dtbo_list + ["vmlinux", "Module.symvers", "Image", "System.map", ".config"],
         base_kernel = ":{}_base_kernel".format(stem),
-        kconfig_ext = ":kconfig.msm.generated",
+        kconfig_ext = ":kconfig.dtb.generated",
         makefile = "//common:Makefile",
         defconfig = defconfig,
         post_defconfig_fragments = [
@@ -87,4 +113,4 @@ def define_qcom_dtbs(
         ],
         visibility = ["//visibility:public"],
     )
-    return [dtb_list, dtbo_list]
+    return [dtb_list, dtbo_list, custom_dtbo_img_list]
