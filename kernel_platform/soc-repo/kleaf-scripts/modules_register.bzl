@@ -14,6 +14,15 @@ load(
     "fragment_menuconfig",
 )
 
+# zram and zsmalloc are provided by both the GKI base and the registered DDK
+# module set. Image assembly keeps the complete module set; exclude only the
+# duplicate DDK copies from ABI extraction so STG does not merge the same GKI
+# exports twice.
+_GKI_OWNED_ABI_MODULES = [
+    "drivers/block/zram/zram",
+    "mm/zsmalloc",
+]
+
 def signing_genrule(name, module, base_kernel, target_variant):
     native.genrule(
         name = name,
@@ -160,9 +169,21 @@ def _generate_ddk_target(
             actual = ":all_headers",
             visibility = ["//visibility:public"],
         )
+    all_modules = module_names.values()
+
     kernel_module_group(
         name = "{}_all_modules".format(target_variant),
-        srcs = module_names.values(),
+        srcs = all_modules,
+        visibility = ["//visibility:public"],
+    )
+
+    kernel_module_group(
+        name = "{}_abi_modules".format(target_variant),
+        srcs = [
+            label
+            for name, label in module_names.items()
+            if name not in _GKI_OWNED_ABI_MODULES
+        ],
         visibility = ["//visibility:public"],
     )
 
