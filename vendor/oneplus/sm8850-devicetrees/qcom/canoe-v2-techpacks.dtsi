@@ -1,0 +1,9 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
+#include "canoe-techpacks-common.dtsi"
+
+#include "camera/canoe-camera-v2.dtsi"
+#include "dsp/canoe/canoe-dsp_v2.dtsi"
+#include "graphics/gpu/canoe-v2-gpu.dtsi"
+#include "graphics/gpu/canoe-v2-gpu-pwrlevels.dtsi"
+#include "video/canoe-vidc-v2.dtsi"

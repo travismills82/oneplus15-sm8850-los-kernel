@@ -1,0 +1,17 @@
+/dts-v1/;
+/plugin/;
+
+#include <dt-bindings/oplus/hw-id.h>
+#include "../canoe-audio-mtp.dts"
+
+#include "canoe-audio-overlay-common.dtsi"
+#include "infiniti-24831-audio-canoe-overlay.dtsi"
+
+#include "infiniti-audio-gpio.dtsi"
+
+/ {
+	model = "Qualcomm Technologies, Inc. Canoe MTP,infiniti";
+
+	oplus,project-id = <24831 24863>;
+	oplus,hw-id = <OPLUS_EVT1 OPLUS_EVT2 OPLUS_DVT1 OPLUS_DVT2 OPLUS_PVT1>;
+};

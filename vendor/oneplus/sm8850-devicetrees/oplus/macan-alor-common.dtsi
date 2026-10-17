@@ -1,0 +1,34 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
+#include <dt-bindings/clock/qcom,alor-gcc.h>
+#include <dt-bindings/clock/qcom,alor-camcc.h>
+#include <dt-bindings/clock/qcom,cambistmclkcc-canoe.h>
+#include <dt-bindings/interconnect/qcom,alor.h>
+#include <dt-bindings/input/input.h>
+#include <dt-bindings/interrupt-controller/arm-gic.h>
+#include <dt-bindings/regulator/qcom,rpmh-regulator-levels.h>
+#include <dt-bindings/clock/qcom,rpmh.h>
+
+#include "../qcom/bt/alor-wcn7750-bt.dtsi"
+#include "../qcom/eSE/alor-ese-common.dtsi"
+#include "../qcom/wlan/alor-wcn7750.dtsi"
+#include "../qcom/display/display/alor-sde-display-mtp.dtsi"
+#include "../qcom/display/oplus/alor-display-overlay-common.dtsi"
+#include "../qcom/display/oplus/macan-24855-display-alor-overlay.dtsi"
+#include "../qcom/audio/alor-audio-mtp.dtsi"
+#include "../qcom/audio/oplus/alor-audio-overlay-common.dtsi"
+#include "../qcom/audio/oplus/macan-24855-audio-alor-overlay.dtsi"
+
+&apps_rsc_drv2 {
+	rpmh-regulator-l5m-e0 {
+		status = "okay";
+	};
+};
+
+&pmk8550 {
+	pon_hlos@1300 {
+		resin {
+			linux,code = <KEY_VOLUMEUP>;
+		};
+	};
+};

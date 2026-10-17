@@ -1,0 +1,9 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/dts-v1/;
+/plugin/;
+
+#include "dengta-25021-canoe.dtsi"
+
+/ {
+	oplus,hw-id = <OPLUS_DVT1 OPLUS_DVT2 OPLUS_PVT1>;
+};

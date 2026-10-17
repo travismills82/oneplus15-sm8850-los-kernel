@@ -1,0 +1,26 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
+#include "../qcom/bt/canoe-wcn786x-bt.dtsi"
+
+#include "../qcom/eSE/canoe-ese-common.dtsi"
+
+#include "../qcom/display/display/canoe-sde-display-mtp.dtsi"
+
+#include "../qcom/display/oplus/canoe-display-overlay-common.dtsi"
+#include "../qcom/display/oplus/fairlady-25821-display-canoe-overlay.dtsi"
+
+#include "../qcom/wlan/oplus/canoe-peach-cnss-overlay.dtsi"
+
+#include <dt-bindings/oplus/hw-id.h>
+#include "../qcom/audio/canoe-audio-mtp.dtsi"
+
+#include "../qcom/audio/oplus/canoe-audio-overlay-common.dtsi"
+#include "../qcom/audio/oplus/fairlady-25821-audio-canoe-overlay.dtsi"
+
+#include <dt-bindings/clock/qcom,gcc-canoe.h>
+#include <dt-bindings/clock/qcom,camcc-canoe.h>
+#include <dt-bindings/clock/qcom,cambistmclkcc-canoe.h>
+#include <dt-bindings/interconnect/qcom,canoe.h>
+#include <dt-bindings/interrupt-controller/arm-gic.h>
+#include <dt-bindings/regulator/qcom,rpmh-regulator-levels.h>
+#include <dt-bindings/clock/qcom,rpmh.h>

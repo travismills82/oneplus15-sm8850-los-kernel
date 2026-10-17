@@ -1,0 +1,11 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
+#include <dt-bindings/mailbox/qcom-ipcc.h>
+
+#include "audio/canoe-audio.dtsi"
+#include "display/display/canoe-sde.dtsi"
+#include "eva/canoe-eva.dtsi"
+#include "mm/hw_fence/canoe-hw-fence.dtsi"
+#include "mm/hfi_core/canoe-hfi-core.dtsi"
+#include "mmrm/canoe/canoe-mmrm.dtsi"
+#include "synx/synx/canoe-synx.dtsi"

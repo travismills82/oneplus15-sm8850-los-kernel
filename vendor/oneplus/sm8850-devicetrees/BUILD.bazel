@@ -1,0 +1,66 @@
+load("//build/kernel/kleaf:kernel.bzl", "kernel_dtstree")
+load("//vendor/oneplus/sm8850-modules/kleaf:repo_paths.bzl", "modules_label")
+
+exports_files(glob(["qcom/*.config"]))
+
+kernel_dtstree(
+    name = "msm_dt",
+    srcs = glob(
+        [
+            "Makefile",
+            "qcom/Makefile",
+            "qcom/**/bindings/**",
+            "qcom/**/*.dtsi",
+            "qcom/**/*.dts",
+            "qcom/**/*.dtso",
+            "qcom/**/Makefile",
+            "oplus/Makefile",
+            "oplus/**/*.dtsi",
+            "oplus/**/*.dts",
+            "oplus/**/*.dtso",
+            "bindings/**/*",
+        ],
+        exclude = [
+            "**/.*",
+            "**/.*/**",
+            "**/*.bazel",
+            "**/*.bzl",
+        ],
+    ) + [
+        "//common:kernel_aarch64_sources",
+        modules_label("qcom/opensource/audio-kernel:dt_binding_headers"),
+        modules_label("qcom/opensource/camera-kernel:dt_binding_headers"),
+        modules_label("qcom/opensource/synx-kernel:dt_binding_headers"),
+    ],
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "dengta_dtbo_config",
+    srcs = ["oplus/dengta_dtbo.config"],
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "fairlady_dtbo_config",
+    srcs = ["oplus/fairlady_dtbo.config"],
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "iceland_dtbo_config",
+    srcs = ["oplus/iceland_dtbo.config"],
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "infiniti_dtbo_config",
+    srcs = ["oplus/infiniti_dtbo.config"],
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "macan_dtbo_config",
+    srcs = ["oplus/macan_dtbo.config"],
+    visibility = ["//visibility:public"],
+)

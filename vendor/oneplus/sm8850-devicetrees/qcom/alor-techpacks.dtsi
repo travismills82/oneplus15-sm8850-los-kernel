@@ -1,0 +1,15 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
+#include <dt-bindings/mailbox/qcom-ipcc.h>
+
+#include "audio/alor-audio.dtsi"
+#include "camera/alor-camera.dtsi"
+#include "display/display/alor-sde.dtsi"
+#include "dsp/alor/alor-dsp.dtsi"
+#include "eva/alor-eva.dtsi"
+#include "graphics/gpu/alor-gpu.dtsi"
+#include "graphics/gpu/alor-gpu-pwrlevels.dtsi"
+#include "video/alor-vidc.dtsi"
+#include "mm/hw_fence/alor-hw-fence.dtsi"
+#include "mm/hfi_core/alor-hfi-core.dtsi"
+#include "synx/synx/canoe-synx.dtsi"

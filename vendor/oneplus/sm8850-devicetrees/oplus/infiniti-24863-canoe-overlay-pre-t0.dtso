@@ -1,0 +1,13 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/dts-v1/;
+/plugin/;
+
+#include "infiniti-24863-canoe.dtsi"
+#include "infiniti-canoe-common.dtsi"
+#include "../qcom/audio/oplus/infiniti-audio-gpio-t0.dtsi"
+#include "../qcom/camera/oplus/infiniti-camera-sensor-mtp-preT0.dtsi"
+
+/ {
+	oplus,project-id = <24863>;
+	oplus,hw-id = <OPLUS_PRE_T0>;
+};

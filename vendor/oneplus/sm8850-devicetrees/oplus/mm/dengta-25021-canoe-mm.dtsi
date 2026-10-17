@@ -1,0 +1,5 @@
+&reserved_memory {
+  qseecom_ta_region {
+    size = <0x0 0x2000000>;
+  };
+};

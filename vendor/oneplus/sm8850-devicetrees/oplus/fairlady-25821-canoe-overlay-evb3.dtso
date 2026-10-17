@@ -1,0 +1,10 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/dts-v1/;
+/plugin/;
+
+#include "fairlady-25821-canoe.dtsi"
+#include "fairlady-canoe-common.dtsi"
+
+/ {
+	oplus,hw-id = <OPLUS_EVB3>;
+};

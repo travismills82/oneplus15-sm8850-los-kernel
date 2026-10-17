@@ -1,0 +1,17 @@
+&pmh0110_f_gpios {
+	hp_det_1p2_active: hp-det-1p2-active-state {
+		pins = "gpio6";
+		function = "paired";
+		input-enable;
+		output-disable;
+		power-source = <2>; /* 1.2v */
+	};
+
+	hp_det_1p8_active: hp-det-1p8-active-state {
+		pins = "gpio5";
+		function = "paired";
+		input-disable;
+		output-enable;
+		power-source = <1>; /* 1.8v */
+	};
+};
