@@ -11,6 +11,7 @@ kernel, module, FBE/user0, and boot-container contract.
 
 | Firmware | Device physically tested | Kernel | Status | Release tag |
 |---|---|---|---|---|
+| LineageOS 24.0 `20261014` nightly | CPH2749 / OP611FL1 | `6.12.112-android16-6-o-g499f2bb26e85-4k` | Physically tested `boot` + matched `system_dlkm` release | `lineage24.0-20261014-linux-6.12.112-kmi6` |
 | OxygenOS 16.0.10.601(EX01) | CPH2749 / OP611FL1 | `6.12.112-android16-6-o-g8dd9cb4790b7-4k` | Watchdog-corrected boot/stability release | `oos16.0.10.601-linux-6.12.112-kmi6-watchdog` |
 | OxygenOS 16.0.10.601(EX01) | CPH2749 / OP611FL1 | `6.12.95-android16-6-o-g02714090683b-4k` | Boot/stability release | `oos16.0.10.601-linux-6.12.95-kmi6-canary` |
 | OxygenOS 16.0.10.601(EX01) | CPH2749 / OP611FL1 | `6.12.89-android16-6-o-g5d9b99c7d104-4k` | Fully qualified rollback baseline | `oos16.0.10.601-linux-6.12.89-kmi6` |
@@ -19,23 +20,28 @@ kernel, module, FBE/user0, and boot-container contract.
 
 Use only the release matching the installed firmware.
 
-## LineageOS 24 experimental branch
+## LineageOS 24.0 `20261014` release
 
-Branch `Lineage-24.0` contains a static OnePlus 15 / `infiniti` candidate that
-combines the project's Linux 6.12.112 common kernel with the exact LineageOS 24
-SM8850 SoC, device-tree, Qualcomm/Oplus module, and CodeLinaro-derived driver
-snapshots. The candidate source is `ce4de3b9cea1`; its kernel release is
-`6.12.112-android16-6-o-gce4de3b9cea1-4k`.
+Branch `Lineage-24.0` combines the project's Linux 6.12.112 common kernel with
+the exact LineageOS 24 SM8850 SoC, device-tree, Qualcomm/Oplus module, and
+CodeLinaro-derived driver snapshots. The physically tested kernel is
+`6.12.112-android16-6-o-g499f2bb26e85-4k`.
 
-The production Canoe distribution, enforced common ABI comparison, and Canoe
-device-module ABI generation pass. This is not yet a release and has not been
-physically tested. Do not cross-flash the generated generic images until the
-installed LineageOS build's boot/AVB, DT, and module-partition contract has
-been captured and compared.
+This release is strictly for `lineage-24.0-20261014-NIGHTLY-infiniti`, build
+`CP2A.260605.016` / `5521dfa82f`. It requires both published assets: the tested
+`boot.img` and its matched hybrid `system_dlkm.img`. The latter preserves 87
+stock Lineage system modules and replaces only `rust_binder.ko`; stock
+`vendor_dlkm`, `vendor_boot`, `init_boot`, DTBO, and VBMeta remain untouched.
+Do not cross-flash either image onto OxygenOS or a different Lineage build.
 
-See [the LineageOS 24 integration status](docs/lineage-24.0/integration-status.md)
-for exact source revisions, CodeLinaro tags, compatibility commits, build
-results, hashes, and the remaining device-qualification boundary.
+The exact images passed full boot partition read-back, Android boot, user0
+`RUNNING_UNLOCKED`, F2FS `/data` with `inlinecrypt`, Rust Binder, 640-module
+static compatibility validation, Wi-Fi, Bluetooth, LTE data, NFC, recovery
+entry/reboot, and fatal kernel/module scans. See:
+
+- [LineageOS 24 integration status](docs/lineage-24.0/integration-status.md)
+- [LineageOS 24 physical validation](docs/validation/lineage-24.0/oneplus15-lineage24.0-20261014-linux-6.12.112.md)
+- [LineageOS 24 release notes](docs/releases/lineage24.0-20261014-linux-6.12.112-kmi6/release-notes.md)
 
 ## Linux 6.12.112 watchdog release for OxygenOS 16.0.10.601
 

@@ -1,6 +1,6 @@
 # LineageOS 24 SM8850 integration status
 
-Status: **static candidate; physical-device qualification not yet performed**
+Status: **physically tested for the exact LineageOS 24.0 `20261014` payload**
 
 This branch adapts the qualified custom Linux 6.12.112 common kernel to the
 OnePlus 15 (`infiniti`) platform sources used by LineageOS 24. It intentionally
@@ -14,8 +14,10 @@ firmware.
 |---|---|
 | Working branch | `Lineage-24.0` |
 | Starting custom-kernel commit | `3b4aea7fd69140c5ab5a9ffabc01433d8785340f` |
-| Candidate source commit | `ce4de3b9cea1f8bb805d08be84b702d442e8ae31` |
-| Candidate kernel release | `6.12.112-android16-6-o-gce4de3b9cea1-4k` |
+| Physically tested build parent | `499f2bb26e859260665a81d195e5fe4c1c81d8d7` |
+| Content-equivalent committed source | `efa73b7de1eba4441a6f49a1eee188d96bba8af0` |
+| Candidate kernel release | `6.12.112-android16-6-o-g499f2bb26e85-4k` |
+| Tested LineageOS build | `lineage-24.0-20261014-NIGHTLY-infiniti` (`CP2A.260605.016` / `5521dfa82f`) |
 | LineageOS SM8850 kernel snapshot | `b41ca28f591b992d4a6141c14f253877a6f2420a` |
 | LineageOS SM8850 device-tree snapshot | `1ed1e65426ed1f80640a0f479cf7e6c7fcb47401` |
 | LineageOS SM8850 module snapshot | `08b3042484e2cfc03fbd9ccb5073d55d561c0a79` |
@@ -74,6 +76,8 @@ candidate.
 | `6ddb667b40ae` | Adapt standalone Lineage repository labels/symlinks to this monorepo without changing driver behavior. |
 | `1c8e158469fc` | Extend the existing qcacld monitor-channel implementation to the Linux 6.12.101+ cfg80211 callback prototype. |
 | `ce4de3b9cea1` | Exclude duplicate GKI zram providers from Canoe ABI extraction while leaving production module packaging unchanged. |
+| `499f2bb26e85` | Record the initial LineageOS 24 source and static integration evidence. |
+| `efa73b7de1eb` | Trust the public GKI module-signing certificate used by the exact LineageOS 24 `20261014` module set. |
 
 The cfg80211 adaptation corresponds to stable commit `d6aef302c418`
 (upstream `9c4f83092775`), which added `struct net_device *` to
@@ -83,8 +87,9 @@ needed extending to this 6.12.112 tree.
 
 ## Static validation
 
-The following commands completed successfully at source commit
-`ce4de3b9cea1f8bb805d08be84b702d442e8ae31`:
+The following gates completed successfully with the physically tested source
+content (build parent `499f2bb26e85` plus the trust-anchor change committed as
+`efa73b7de1eb`):
 
 ```sh
 cd kernel_platform
@@ -111,9 +116,9 @@ tools/bazel build \
 | Enforced common/GKI ABI comparison | PASS |
 | Canoe device-module ABI generation | PASS |
 | `depmod` during production packaging | PASS |
-| Module vermagic consistency | PASS: 640/640 use the candidate release |
-| Physical boot/runtime | **NOT TESTED** |
-| Installed LineageOS module/partition oracle | **NOT YET CAPTURED** |
+| Production-realistic Lineage module oracle | PASS: 640/640 classified, 0 blockers |
+| Physical boot/runtime | PASS |
+| Boot partition write/read-back | PASS, byte-identical |
 
 Non-fatal build warnings remain in the imported source, including duplicate DT
 macro definitions, deprecated QSEECom interfaces, deprecated
@@ -122,10 +127,10 @@ linker, modpost, dependency, packaging, common ABI, or Canoe ABI failure
 remained.
 
 The generated configuration has `CONFIG_MODVERSIONS=y`,
-`CONFIG_GENDWARFKSYMS=y`, and `CONFIG_MODULE_SIG=y`. The Lineage configuration
-does not force signatures; 109 GKI modules are build-key SHA-256 signed and 531
-DDK modules are unsigned. This matches the generated Lineage-oriented target,
-but it must be compared with the exact installed ROM before flashing.
+`CONFIG_GENDWARFKSYMS=y`, and `CONFIG_MODULE_SIG=y`. It embeds the exact public
+LineageOS `20261014` GKI module-signing certificate rather than weakening
+signature or protected-symbol validation. This corrected the splash-screen
+failure caused by rejecting the stock signed module population.
 
 ## Effective configuration highlights
 
@@ -142,6 +147,7 @@ CONFIG_QCOM_SCM=m
 CONFIG_MODVERSIONS=y
 CONFIG_GENDWARFKSYMS=y
 CONFIG_MODULE_SIG=y
+CONFIG_SYSTEM_TRUSTED_KEYS="certs/lineage24_0_20261014_gki_module_signing.pem"
 # CONFIG_MODULE_SIG_FORCE is not set
 # CONFIG_NTFS3_FS is not set
 ```
@@ -162,49 +168,34 @@ CONFIG_SCSI_UFSHCD=y
 CONFIG_SCSI_UFS_CRYPTO=y
 ```
 
-## Candidate artifacts
-
-Artifact directory:
-
-`/home/travis/Android/stock_kernel/out/lineage-24.0/artifacts/canoe_perf_dist_final`
+## Physically tested artifacts
 
 | Artifact | Size (bytes) | SHA-256 |
 |---|---:|---|
-| `Image` | 42,580,480 | `1c1857917cadf2eab7a72b7bc815c3960e5a20cbabe062bdca610f69732c7329` |
-| `boot.img` | 100,663,296 | `58561f1e06f8fb9c975bf64558154663d44c70991397e4188f14f57c457e10ff` |
-| `dtb.img` | 6,588,449 | `5dde1b4a623c16676f0297a0cb6400765e2f669a35f14690d8d78a6f394a8ec1` |
-| `dtbo.img` | 10,367,364 | `b5e80a8b4ef447699df1ed7687a4c7670f5f7c3982e9448427b8920f6cfd9d74` |
-| `vendor_boot.img` | 38,273,024 | `cb5d4e956eaa3838cdabd17c51e7baec0570939f41b6b8e28d6191f5b5b2701c` |
-| `vendor_dlkm.img` | 195,473,408 | `fd923791b1344390618dda0cfe59192cfbe1afb4a90ce715e7a42f5e71f03d7d` |
-| `system_dlkm.erofs.img` | 102,907,904 | `e81b0e76ac9507d3116e1a3f8389ab376cf7b0e4eacfe0f29a61b80be5e84f07` |
-| `super.img` | 292,798,728 | `e29944b1082448fe8c78efcba800d28da17ca892f08d54d0e428c43651c32c96` |
-| effective `.config` | 266,432 | `617c28ca53b2721c4823a3055015356970be9e21a9333e6c2d5460222e6d9f14` |
+| Embedded `Image` | 42,580,480 | `7a04fc65e73dc52fd6b1938299192fc98a516b207b127ee7c8422cfb9d0972a4` |
+| `boot.img` | 100,663,296 | `c98f46a1fefd2b890d0370d8743d63ef35aabc055d25a90dca4395920bc79226` |
+| hybrid `system_dlkm.img` | 8,327,168 | `18524c480a07047c09a284e70ed83395afc74921c960993adc75a5d730e5c33e` |
+| rebuilt `rust_binder.ko` | 837,001 | `0b417fe58b514b8af431a9e76ecb65ea70180b7c356580bff314576fa0b09604` |
+| effective `.config` | 266,432 | `b33b65841a205b5e4bbbdb2675535835e5ca2798edead4d33507bd258d4313c6` |
 | common `Module.symvers` | 664,314 | `a1665917c5579d1c59f3d91197e8ff22188404163ef28e2a046a9c998b2366d4` |
 
-The distribution contains 640 modules. Its combined `modules.dep` has 640
-entries; the generated generic load list has 134 entries, the system list has
-88 entries, and the vendor list has 205 entries.
+The production-realistic population contains 640 modules: 88 in the hybrid
+system image and 552 untouched stock vendor modules. The oracle resolved all
+36,671 hard ELF imports and matched all 37,313 version records with zero
+missing providers, CRC mismatches, namespace failures, or blockers.
 
-## Payload boundary and next qualification step
+## Physical qualification and payload boundary
 
-The successful build proves that the matched Lineage/CodeLinaro driver stack
-compiles and passes the available ABI gates against the 6.12.112 common kernel.
-It does **not** yet prove that the generic Kleaf `boot.img`, `vendor_boot.img`,
-or DLKM images are byte-compatible with the currently installed LineageOS 24
-build.
+The exact two-image payload passed boot, encrypted user0, F2FS inline crypto,
+Rust Binder, Wi-Fi, Bluetooth, LTE data, NFC, recovery reboot, and fatal
+kernel/module scans on a CPH2749 running the exact `20261014` LineageOS build.
+The boot read-back matched the candidate byte-for-byte. The EROFS system image
+mounted under dm-verity and its module population loaded successfully.
 
-Before a physical flash, capture from the installed phone:
+The release requires the matched active-slot `boot` and `system_dlkm` images.
+It deliberately does not publish or replace generic Canoe `vendor_dlkm`,
+`vendor_boot`, `init_boot`, DTBO, VBMeta, or super images. A different Lineage
+build is outside this qualification contract.
 
-1. LineageOS fingerprint, build ID, security patch, slot, and running kernel.
-2. Exact active `boot`, `init_boot`, `vendor_boot`, `dtbo`, `system_dlkm`, and
-   `vendor_dlkm` images and SHA-256 hashes.
-3. Installed module names, vermagic, signatures, imports, MODVERSIONS CRCs,
-   namespaces, load lists, and provider precedence.
-4. The installed boot header, ramdisk, bootconfig, OS version/security patch,
-   AVB footer/properties, and rollback indexes.
-
-The first test candidate should then be packaged with those exact installed
-container inputs. A hash-verified rollback must be retained, and only the
-minimum proven partition set should be written. Until that evidence is
-captured, this branch is a **static LineageOS 24 candidate, not a physically
-qualified stable kernel**.
+Full device evidence and the tested rollback hashes are recorded in
+[the physical validation report](../validation/lineage-24.0/oneplus15-lineage24.0-20261014-linux-6.12.112.md).
