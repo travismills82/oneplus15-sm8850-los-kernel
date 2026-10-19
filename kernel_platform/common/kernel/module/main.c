@@ -3314,6 +3314,21 @@ static int early_mod_check(struct load_info *info, int flags)
 }
 
 /*
+ * The exact LineageOS system_dlkm module list still requests rust_binder.ko.
+ * When Rust Binder is built in, satisfy that one request without consuming
+ * the incompatible stock module. Signature, ELF, name, and blacklist checks
+ * remain mandatory; all other module names follow the normal loading path.
+ */
+static bool module_load_satisfied_by_builtin(const char *name)
+{
+#if IS_BUILTIN(CONFIG_ANDROID_BINDER_IPC_RUST)
+	return !strcmp(name, "rust_binder");
+#else
+	return false;
+#endif
+}
+
+/*
  * Allocate and load the module: note that size of section 0 is always
  * zero, and we rely on this for optional sections.
  */
@@ -3349,6 +3364,19 @@ static int load_module(struct load_info *info, const char __user *uargs,
 	err = elf_validity_cache_copy(info, flags);
 	if (err)
 		goto free_copy;
+
+	if (module_load_satisfied_by_builtin(info->name)) {
+		if (blacklisted(info->name)) {
+			pr_err("Module %s is blacklisted\n", info->name);
+			err = -EPERM;
+			goto free_copy;
+		}
+
+		pr_info_once("module: %s load request satisfied by built-in implementation\n",
+			     info->name);
+		free_copy(info, flags);
+		return 0;
+	}
 
 	err = early_mod_check(info, flags);
 	if (err)
