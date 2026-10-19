@@ -13,6 +13,7 @@ use kernel::task::{Pid, Task};
 use kernel::tracepoint::declare_trace;
 use kernel::uapi;
 
+#[cfg(MODULE)]
 declare_trace! {
     unsafe fn binder_ioctl(cmd: c_uint, arg: c_ulong);
     unsafe fn binder_ioctl_done(ret: c_int);
@@ -49,6 +50,78 @@ declare_trace! {
     unsafe fn binder_command(cmd: u32);
     unsafe fn binder_return(ret: u32);
 }
+
+#[cfg(not(MODULE))]
+declare_trace! {
+    unsafe fn rust_binder_ioctl(cmd: c_uint, arg: c_ulong);
+    unsafe fn rust_binder_ioctl_done(ret: c_int);
+    unsafe fn rust_binder_read_done(ret: c_int);
+    unsafe fn rust_binder_write_done(ret: c_int);
+    unsafe fn rust_binder_set_priority(thread: *mut task_struct, desired_prio: c_int,
+                                       new_prio: c_int);
+    unsafe fn android_vh_rust_binder_set_priority(t: rust_binder_transaction,
+                                                  task: *mut task_struct);
+    unsafe fn android_vh_rust_binder_restore_priority(task: *mut task_struct);
+    unsafe fn android_vh_rust_binder_looper_entry(t: rust_binder_thread, looper_flags: u32);
+    unsafe fn rust_binder_wait_for_work(proc_work: bool, transaction_stack: bool,
+                                        thread_todo: bool);
+    unsafe fn rust_binder_transaction(reply: bool, t: rust_binder_transaction,
+                                      thread: *mut task_struct);
+    unsafe fn rust_binder_transaction_received(t: rust_binder_transaction);
+    unsafe fn rust_binder_transaction_thread_selected(t: rust_binder_transaction,
+                                                       u: rust_binder_thread);
+    unsafe fn rust_binder_transaction_node_send(t_debug_id: c_int, n: rust_binder_node,
+                                                orig: *const flat_binder_object,
+                                                trans: *const flat_binder_object);
+    unsafe fn rust_binder_transaction_fd_send(t_debug_id: c_int, fd: c_int, offset: usize);
+    unsafe fn rust_binder_transaction_fd_recv(t_debug_id: c_int, fd: c_int, offset: usize);
+    unsafe fn rust_binder_transaction_alloc_buf(debug_id: c_int, ds: usize, os: usize,
+                                                bs: usize);
+    unsafe fn rust_binder_transaction_buffer_release(debug_id: c_int);
+    unsafe fn rust_binder_transaction_failed_buffer_release(debug_id: c_int);
+    unsafe fn rust_binder_transaction_update_buffer_release(debug_id: c_int);
+    unsafe fn rust_binder_update_page_range(pid: c_int, allocate: bool, start: usize, end: usize);
+    unsafe fn rust_binder_alloc_lru_start(pid: c_int, page_index: usize);
+    unsafe fn rust_binder_alloc_lru_end(pid: c_int, page_index: usize);
+    unsafe fn rust_binder_free_lru_start(pid: c_int, page_index: usize);
+    unsafe fn rust_binder_free_lru_end(pid: c_int, page_index: usize);
+    unsafe fn rust_binder_alloc_page_start(pid: c_int, page_index: usize);
+    unsafe fn rust_binder_alloc_page_end(pid: c_int, page_index: usize);
+    unsafe fn rust_binder_unmap_user_start(pid: c_int, page_index: usize);
+    unsafe fn rust_binder_unmap_user_end(pid: c_int, page_index: usize);
+    unsafe fn rust_binder_unmap_kernel_start(pid: c_int, page_index: usize);
+    unsafe fn rust_binder_unmap_kernel_end(pid: c_int, page_index: usize);
+    unsafe fn rust_binder_command(cmd: u32);
+    unsafe fn rust_binder_return(ret: u32);
+}
+
+#[cfg(not(MODULE))]
+use self::{
+    rust_binder_alloc_lru_end as binder_alloc_lru_end,
+    rust_binder_alloc_lru_start as binder_alloc_lru_start,
+    rust_binder_alloc_page_end as binder_alloc_page_end,
+    rust_binder_alloc_page_start as binder_alloc_page_start, rust_binder_command as binder_command,
+    rust_binder_free_lru_end as binder_free_lru_end,
+    rust_binder_free_lru_start as binder_free_lru_start, rust_binder_ioctl as binder_ioctl,
+    rust_binder_ioctl_done as binder_ioctl_done, rust_binder_read_done as binder_read_done,
+    rust_binder_return as binder_return, rust_binder_set_priority as binder_set_priority,
+    rust_binder_transaction as binder_transaction,
+    rust_binder_transaction_alloc_buf as binder_transaction_alloc_buf,
+    rust_binder_transaction_buffer_release as binder_transaction_buffer_release,
+    rust_binder_transaction_failed_buffer_release as binder_transaction_failed_buffer_release,
+    rust_binder_transaction_fd_recv as binder_transaction_fd_recv,
+    rust_binder_transaction_fd_send as binder_transaction_fd_send,
+    rust_binder_transaction_node_send as binder_transaction_node_send,
+    rust_binder_transaction_received as binder_transaction_received,
+    rust_binder_transaction_thread_selected as binder_transaction_thread_selected,
+    rust_binder_transaction_update_buffer_release as binder_transaction_update_buffer_release,
+    rust_binder_unmap_kernel_end as binder_unmap_kernel_end,
+    rust_binder_unmap_kernel_start as binder_unmap_kernel_start,
+    rust_binder_unmap_user_end as binder_unmap_user_end,
+    rust_binder_unmap_user_start as binder_unmap_user_start,
+    rust_binder_update_page_range as binder_update_page_range,
+    rust_binder_wait_for_work as binder_wait_for_work, rust_binder_write_done as binder_write_done,
+};
 
 #[inline]
 fn raw_transaction(t: &Transaction) -> rust_binder_transaction {

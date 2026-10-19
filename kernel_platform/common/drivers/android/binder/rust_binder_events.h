@@ -15,7 +15,39 @@
 
 #include <linux/tracepoint.h>
 
-TRACE_EVENT(binder_ioctl,
+/*
+ * A loadable Rust Binder module has its own ELF symbol namespace, but a
+ * built-in driver shares vmlinux with the C Binder compatibility code.  Give
+ * the Rust tracepoints distinct link and tracefs names in that configuration;
+ * otherwise the two intentionally different event payloads define duplicate
+ * symbols.  The C tracepoint names remain unchanged for KMI consumers.
+ */
+#if IS_BUILTIN(CONFIG_ANDROID_BINDER_IPC_RUST)
+#define RB_TRACE_NAME(name) rust_##name
+#else
+#define RB_TRACE_NAME(name) name
+#endif
+
+/* Expand RB_TRACE_NAME before the trace macros paste symbol names. */
+#define __RB_TRACE_EVENT(name, proto, args, tstruct, assign, print) \
+	TRACE_EVENT(name, PARAMS(proto), PARAMS(args), PARAMS(tstruct), \
+		    PARAMS(assign), PARAMS(print))
+#define RB_TRACE_EVENT(name, proto, args, tstruct, assign, print) \
+	__RB_TRACE_EVENT(RB_TRACE_NAME(name), PARAMS(proto), PARAMS(args), \
+			 PARAMS(tstruct), PARAMS(assign), PARAMS(print))
+#define __RB_DECLARE_EVENT_CLASS(name, proto, args, tstruct, assign, print) \
+	DECLARE_EVENT_CLASS(name, PARAMS(proto), PARAMS(args), PARAMS(tstruct), \
+			    PARAMS(assign), PARAMS(print))
+#define RB_DECLARE_EVENT_CLASS(name, proto, args, tstruct, assign, print) \
+	__RB_DECLARE_EVENT_CLASS(RB_TRACE_NAME(name), PARAMS(proto), PARAMS(args), \
+				 PARAMS(tstruct), PARAMS(assign), PARAMS(print))
+#define __RB_DEFINE_EVENT(template, name, proto, args) \
+	DEFINE_EVENT(template, name, PARAMS(proto), PARAMS(args))
+#define RB_DEFINE_EVENT(template, name, proto, args) \
+	__RB_DEFINE_EVENT(RB_TRACE_NAME(template), RB_TRACE_NAME(name), \
+			  PARAMS(proto), PARAMS(args))
+
+RB_TRACE_EVENT(binder_ioctl,
 	TP_PROTO(unsigned int cmd, unsigned long arg),
 	TP_ARGS(cmd, arg),
 
@@ -30,7 +62,7 @@ TRACE_EVENT(binder_ioctl,
 	TP_printk("cmd=0x%x arg=0x%lx", __entry->cmd, __entry->arg)
 );
 
-DECLARE_EVENT_CLASS(binder_function_return_class,
+RB_DECLARE_EVENT_CLASS(binder_function_return_class,
 	TP_PROTO(int ret),
 	TP_ARGS(ret),
 	TP_STRUCT__entry(
@@ -43,7 +75,7 @@ DECLARE_EVENT_CLASS(binder_function_return_class,
 );
 
 #define DEFINE_RBINDER_FUNCTION_RETURN_EVENT(name)	\
-DEFINE_EVENT(binder_function_return_class, name,	\
+RB_DEFINE_EVENT(binder_function_return_class, name,	\
 	TP_PROTO(int ret), \
 	TP_ARGS(ret))
 
@@ -51,7 +83,7 @@ DEFINE_RBINDER_FUNCTION_RETURN_EVENT(binder_ioctl_done);
 DEFINE_RBINDER_FUNCTION_RETURN_EVENT(binder_read_done);
 DEFINE_RBINDER_FUNCTION_RETURN_EVENT(binder_write_done);
 
-TRACE_EVENT(binder_set_priority,
+RB_TRACE_EVENT(binder_set_priority,
 	TP_PROTO(struct task_struct *thread, int desired_prio, int new_prio),
 	TP_ARGS(thread, desired_prio, new_prio),
 
@@ -74,7 +106,7 @@ TRACE_EVENT(binder_set_priority,
 		  __entry->new_prio, __entry->desired_prio)
 );
 
-TRACE_EVENT(binder_wait_for_work,
+RB_TRACE_EVENT(binder_wait_for_work,
 	TP_PROTO(bool proc_work, bool transaction_stack, bool thread_todo),
 	TP_ARGS(proc_work, transaction_stack, thread_todo),
 
@@ -93,7 +125,7 @@ TRACE_EVENT(binder_wait_for_work,
 		  __entry->thread_todo)
 );
 
-TRACE_EVENT(binder_transaction,
+RB_TRACE_EVENT(binder_transaction,
 	TP_PROTO(bool reply, rust_binder_transaction t, struct task_struct *thread),
 	TP_ARGS(reply, t, thread),
 	TP_STRUCT__entry(
@@ -123,7 +155,7 @@ TRACE_EVENT(binder_transaction,
 		  __entry->reply, __entry->flags, __entry->code)
 );
 
-TRACE_EVENT(binder_transaction_thread_selected,
+RB_TRACE_EVENT(binder_transaction_thread_selected,
 	TP_PROTO(rust_binder_transaction t, rust_binder_thread thread),
 	TP_ARGS(t, thread),
 	TP_STRUCT__entry(
@@ -137,7 +169,7 @@ TRACE_EVENT(binder_transaction_thread_selected,
 	TP_printk("transaction=%d thread=%d", __entry->debug_id, __entry->to_thread)
 );
 
-TRACE_EVENT(binder_transaction_received,
+RB_TRACE_EVENT(binder_transaction_received,
 	TP_PROTO(rust_binder_transaction t),
 	TP_ARGS(t),
 	TP_STRUCT__entry(
@@ -149,7 +181,7 @@ TRACE_EVENT(binder_transaction_received,
 	TP_printk("transaction=%d", __entry->debug_id)
 );
 
-TRACE_EVENT(binder_transaction_node_send,
+RB_TRACE_EVENT(binder_transaction_node_send,
 	TP_PROTO(int t_debug_id, rust_binder_node node,
 		const struct flat_binder_object *original,
 		const struct flat_binder_object *translated),
@@ -191,7 +223,7 @@ TRACE_EVENT(binder_transaction_node_send,
 		  __entry->translated_handle)
 );
 
-TRACE_EVENT(binder_transaction_fd_send,
+RB_TRACE_EVENT(binder_transaction_fd_send,
 	TP_PROTO(int t_debug_id, int fd, size_t offset),
 	TP_ARGS(t_debug_id, fd, offset),
 
@@ -209,7 +241,7 @@ TRACE_EVENT(binder_transaction_fd_send,
 		  __entry->debug_id, __entry->fd, __entry->offset)
 );
 
-TRACE_EVENT(binder_transaction_fd_recv,
+RB_TRACE_EVENT(binder_transaction_fd_recv,
 	TP_PROTO(int t_debug_id, int fd, size_t offset),
 	TP_ARGS(t_debug_id, fd, offset),
 
@@ -227,7 +259,7 @@ TRACE_EVENT(binder_transaction_fd_recv,
 		  __entry->debug_id, __entry->fd, __entry->offset)
 );
 
-TRACE_EVENT(binder_transaction_alloc_buf,
+RB_TRACE_EVENT(binder_transaction_alloc_buf,
 	TP_PROTO(int debug_id, size_t data_size, size_t offsets_size, size_t extra_buffers_size),
 	TP_ARGS(debug_id, data_size, offsets_size, extra_buffers_size),
 
@@ -248,7 +280,7 @@ TRACE_EVENT(binder_transaction_alloc_buf,
 		  __entry->extra_buffers_size)
 );
 
-DECLARE_EVENT_CLASS(binder_buffer_release_class,
+RB_DECLARE_EVENT_CLASS(binder_buffer_release_class,
 	TP_PROTO(int debug_id),
 	TP_ARGS(debug_id),
 	TP_STRUCT__entry(
@@ -260,19 +292,19 @@ DECLARE_EVENT_CLASS(binder_buffer_release_class,
 	TP_printk("transaction=%d", __entry->debug_id)
 );
 
-DEFINE_EVENT(binder_buffer_release_class, binder_transaction_buffer_release,
+RB_DEFINE_EVENT(binder_buffer_release_class, binder_transaction_buffer_release,
 	TP_PROTO(int debug_id),
 	TP_ARGS(debug_id));
 
-DEFINE_EVENT(binder_buffer_release_class, binder_transaction_failed_buffer_release,
+RB_DEFINE_EVENT(binder_buffer_release_class, binder_transaction_failed_buffer_release,
 	TP_PROTO(int debug_id),
 	TP_ARGS(debug_id));
 
-DEFINE_EVENT(binder_buffer_release_class, binder_transaction_update_buffer_release,
+RB_DEFINE_EVENT(binder_buffer_release_class, binder_transaction_update_buffer_release,
 	TP_PROTO(int debug_id),
 	TP_ARGS(debug_id));
 
-TRACE_EVENT(binder_update_page_range,
+RB_TRACE_EVENT(binder_update_page_range,
 	TP_PROTO(int pid, bool allocate, size_t start, size_t end),
 	TP_ARGS(pid, allocate, start, end),
 	TP_STRUCT__entry(
@@ -292,7 +324,7 @@ TRACE_EVENT(binder_update_page_range,
 		  __entry->offset, __entry->size)
 );
 
-DECLARE_EVENT_CLASS(binder_lru_page_class,
+RB_DECLARE_EVENT_CLASS(binder_lru_page_class,
 	TP_PROTO(int pid, size_t page_index),
 	TP_ARGS(pid, page_index),
 	TP_STRUCT__entry(
@@ -307,47 +339,47 @@ DECLARE_EVENT_CLASS(binder_lru_page_class,
 		  __entry->proc, __entry->page_index)
 );
 
-DEFINE_EVENT(binder_lru_page_class, binder_alloc_lru_start,
+RB_DEFINE_EVENT(binder_lru_page_class, binder_alloc_lru_start,
 	TP_PROTO(int pid, size_t page_index),
 	TP_ARGS(pid, page_index));
 
-DEFINE_EVENT(binder_lru_page_class, binder_alloc_lru_end,
+RB_DEFINE_EVENT(binder_lru_page_class, binder_alloc_lru_end,
 	TP_PROTO(int pid, size_t page_index),
 	TP_ARGS(pid, page_index));
 
-DEFINE_EVENT(binder_lru_page_class, binder_free_lru_start,
+RB_DEFINE_EVENT(binder_lru_page_class, binder_free_lru_start,
 	TP_PROTO(int pid, size_t page_index),
 	TP_ARGS(pid, page_index));
 
-DEFINE_EVENT(binder_lru_page_class, binder_free_lru_end,
+RB_DEFINE_EVENT(binder_lru_page_class, binder_free_lru_end,
 	TP_PROTO(int pid, size_t page_index),
 	TP_ARGS(pid, page_index));
 
-DEFINE_EVENT(binder_lru_page_class, binder_alloc_page_start,
+RB_DEFINE_EVENT(binder_lru_page_class, binder_alloc_page_start,
 	TP_PROTO(int pid, size_t page_index),
 	TP_ARGS(pid, page_index));
 
-DEFINE_EVENT(binder_lru_page_class, binder_alloc_page_end,
+RB_DEFINE_EVENT(binder_lru_page_class, binder_alloc_page_end,
 	TP_PROTO(int pid, size_t page_index),
 	TP_ARGS(pid, page_index));
 
-DEFINE_EVENT(binder_lru_page_class, binder_unmap_user_start,
+RB_DEFINE_EVENT(binder_lru_page_class, binder_unmap_user_start,
 	TP_PROTO(int pid, size_t page_index),
 	TP_ARGS(pid, page_index));
 
-DEFINE_EVENT(binder_lru_page_class, binder_unmap_user_end,
+RB_DEFINE_EVENT(binder_lru_page_class, binder_unmap_user_end,
 	TP_PROTO(int pid, size_t page_index),
 	TP_ARGS(pid, page_index));
 
-DEFINE_EVENT(binder_lru_page_class, binder_unmap_kernel_start,
+RB_DEFINE_EVENT(binder_lru_page_class, binder_unmap_kernel_start,
 	TP_PROTO(int pid, size_t page_index),
 	TP_ARGS(pid, page_index));
 
-DEFINE_EVENT(binder_lru_page_class, binder_unmap_kernel_end,
+RB_DEFINE_EVENT(binder_lru_page_class, binder_unmap_kernel_end,
 	TP_PROTO(int pid, size_t page_index),
 	TP_ARGS(pid, page_index));
 
-TRACE_EVENT(binder_command,
+RB_TRACE_EVENT(binder_command,
 	TP_PROTO(uint32_t cmd),
 	TP_ARGS(cmd),
 	TP_STRUCT__entry(
@@ -363,7 +395,7 @@ TRACE_EVENT(binder_command,
 			  "unknown")
 );
 
-TRACE_EVENT(binder_return,
+RB_TRACE_EVENT(binder_return,
 	TP_PROTO(uint32_t cmd),
 	TP_ARGS(cmd),
 	TP_STRUCT__entry(
@@ -383,3 +415,11 @@ TRACE_EVENT(binder_return,
 
 /* This part must be outside protection */
 #include <trace/define_trace.h>
+
+#undef RB_DEFINE_EVENT
+#undef __RB_DEFINE_EVENT
+#undef RB_DECLARE_EVENT_CLASS
+#undef __RB_DECLARE_EVENT_CLASS
+#undef RB_TRACE_EVENT
+#undef __RB_TRACE_EVENT
+#undef RB_TRACE_NAME
