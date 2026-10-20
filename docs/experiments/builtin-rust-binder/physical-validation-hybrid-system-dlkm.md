@@ -2,7 +2,11 @@
 
 Date: 2026-10-19
 
-Status: **CORE PASS ON HYBRID SYSTEM_DLKM; STRICT STOCK TEST PENDING**
+Status: **HISTORICAL CORE PASS ON HYBRID SYSTEM_DLKM; STRICT STOCK CORE TEST LATER PASSED**
+
+The subsequent untouched-stock-DLKM run is recorded in
+`physical-validation-stock-system-dlkm.md`. The scope and evidence below remain
+the record of the earlier hybrid-only test.
 
 ## Scope
 
@@ -121,6 +125,8 @@ rollback image. They are private test artifacts and are not committed.
 This run does not prove compatibility with the untouched stock
 `system_dlkm` SHA-256
 `3947c061321b6d8358020feba6138533540741f4e2fb6a09abaf81c55630b788`.
-That exact partition state, plus the five owner-observed peripheral/deep-sleep
-checks above, remains required before the experiment can meet every success
-criterion or be promoted as a release.
+That exact partition state was subsequently restored and passed the strict
+core physical test documented in
+`physical-validation-stock-system-dlkm.md`. The five owner-observed
+peripheral/deep-sleep checks above remain required before the experiment can
+meet every success criterion or be promoted as a release.

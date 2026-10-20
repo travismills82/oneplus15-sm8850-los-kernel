@@ -1,14 +1,16 @@
 # Built-in Rust Binder verification
 
-Status: **STATIC PASS; HYBRID-DLKM CORE PHYSICAL PASS; STOCK-DLKM PHYSICAL TEST PENDING**
+Status: **STATIC PASS; STOCK-DLKM CORE PHYSICAL PASS; MANUAL HARDWARE/DEEP-SUSPEND GATES PENDING**
 
 This report covers the experimental `builtin-rust-binder` branch based on
 `5173f30f4ee16589444d686497196fe0bfd639aa`, the commit named by
 `lineage24.0-20261014-linux-6.12.112-kmi6`. It does not qualify a stable
 release. When the static report was produced, no device had been connected or
 flashed, and the protected `Lineage-24.0` checkout remains unchanged. A later
-owner-authorized physical test changed only active `boot_a`; its scoped
-results are recorded in `physical-validation-hybrid-system-dlkm.md`.
+owner-authorized physical test first changed only active `boot_a`; its scoped
+results are recorded in `physical-validation-hybrid-system-dlkm.md`. A second
+authorized run restored the untouched stock `system_dlkm_a` baseline and is
+recorded in `physical-validation-stock-system-dlkm.md`.
 
 ## Implementation
 
@@ -179,11 +181,17 @@ USB/ADB, recovery reboot, exact boot read-back, and a 210-second stability
 window passed. No loadable `rust_binder` appeared and no fatal kernel event or
 pstore record was found.
 
-That run retained the previous hybrid `system_dlkm` with SHA-256
-`18524c480a07047c09a284e70ed83395afc74921c960993adc75a5d730e5c33e`,
-not the untouched stock image. It proves the built-in driver and redundant
-module-request behavior on the hybrid population, but it does not complete the
-experiment's strict stock-DLKM success criterion. Bluetooth peripheral I/O,
-an NFC tag transaction, audible playback, a live fingerprint match, and deep
-suspend also require owner-observed testing. No publication or stable
-promotion is authorized.
+The previous hybrid `system_dlkm` was then backed up and the exact untouched
+stock image, SHA-256
+`3947c061321b6d8358020feba6138533540741f4e2fb6a09abaf81c55630b788`,
+was restored to `system_dlkm_a`. Two Android boots and a TWRP recovery cycle
+passed with exact boot/system/vendor read-backs, built-in Rust Binder selected,
+the stock `rust_binder.ko` present but not loaded, zero module errors, Android
+and recovery decryption, working Wi-Fi/LTE/camera/ADB, and a clean 210-second
+stability window. This closes the strict stock-DLKM core compatibility gate.
+
+Sustained Bluetooth peripheral I/O, an NFC tag transaction, owner-observed
+audible playback, a live fingerprint match, and USB-disconnected deep suspend
+remain. The USB-connected forced suspend attempt was safely rejected with
+`a600000.dwc3` busy and no crash. No publication or stable promotion is
+authorized until those manual gates pass.
