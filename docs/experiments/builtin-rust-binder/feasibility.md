@@ -104,7 +104,7 @@ driver while allowing the original `modules.load` to remain unchanged. The
 candidate build and stock-module audit must still prove that no other
 compatibility regression was introduced.
 
-## Source changes planned
+## Implemented source changes
 
 - arm64 GKI defconfig: set `CONFIG_ANDROID_BINDER_IPC_RUST=y`;
 - arm64 Kleaf GKI module list: remove the no-longer-produced
@@ -117,3 +117,8 @@ compatibility regression was introduced.
 
 No legacy-C-Binder substitution, security relaxation, ABI-check bypass, or
 non-boot partition change is part of the design.
+
+The implementation and final static evidence are recorded in
+`builtin-verification.md`. All mandatory build, common ABI, strict KMI, Canoe
+ABI, retained-stock module, and boot-container checks pass. Physical testing
+has not been run and remains the final qualification gate.
