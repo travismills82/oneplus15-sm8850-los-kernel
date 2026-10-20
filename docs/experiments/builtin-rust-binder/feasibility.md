@@ -120,5 +120,8 @@ non-boot partition change is part of the design.
 
 The implementation and final static evidence are recorded in
 `builtin-verification.md`. All mandatory build, common ABI, strict KMI, Canoe
-ABI, retained-stock module, and boot-container checks pass. Physical testing
-has not been run and remains the final qualification gate.
+ABI, retained-stock module, and boot-container checks pass. A boot-only core
+qualification also passes with the previously installed hybrid `system_dlkm`,
+as recorded in `physical-validation-hybrid-system-dlkm.md`. Physical testing
+with the untouched stock `system_dlkm` remains the final strict qualification
+gate.

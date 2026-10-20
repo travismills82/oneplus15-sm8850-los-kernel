@@ -1,12 +1,14 @@
 # Built-in Rust Binder verification
 
-Status: **STATIC PASS; PHYSICAL TESTING NOT RUN**
+Status: **STATIC PASS; HYBRID-DLKM CORE PHYSICAL PASS; STOCK-DLKM PHYSICAL TEST PENDING**
 
 This report covers the experimental `builtin-rust-binder` branch based on
 `5173f30f4ee16589444d686497196fe0bfd639aa`, the commit named by
 `lineage24.0-20261014-linux-6.12.112-kmi6`. It does not qualify a stable
-release. No device was connected, no partition was flashed, and the protected
-`Lineage-24.0` checkout remains unchanged.
+release. When the static report was produced, no device had been connected or
+flashed, and the protected `Lineage-24.0` checkout remains unchanged. A later
+owner-authorized physical test changed only active `boot_a`; its scoped
+results are recorded in `physical-validation-hybrid-system-dlkm.md`.
 
 ## Implementation
 
@@ -168,10 +170,20 @@ ramdisk and a kernel byte-identical to the qualified `Image`. The final
 `boot.img` is 100,663,296 bytes with SHA-256
 `debbcb02d87474e99402024ab2c9a5e9a4da2e959d13543f57c9705f88631cb4`.
 
-## Qualification boundary
+## Physical evidence and qualification boundary
 
-The candidate is ready for explicit owner-authorized boot-only testing, but it
-is not a successful release yet. Android boot, encrypted user0, live Binder
-selection, stock module-loader behavior, hardware functions, suspend/resume,
-and fatal-log monitoring remain untested. Those checks cannot be inferred from
-the static PASS and must complete before publication or stable promotion.
+The exact candidate was subsequently flashed only to active `boot_a`. Android
+boot, built-in Rust Binder selection, Binder devices and services, Android and
+TWRP user0 decryption, F2FS inline encryption, Wi-Fi, LTE data, camera launch,
+USB/ADB, recovery reboot, exact boot read-back, and a 210-second stability
+window passed. No loadable `rust_binder` appeared and no fatal kernel event or
+pstore record was found.
+
+That run retained the previous hybrid `system_dlkm` with SHA-256
+`18524c480a07047c09a284e70ed83395afc74921c960993adc75a5d730e5c33e`,
+not the untouched stock image. It proves the built-in driver and redundant
+module-request behavior on the hybrid population, but it does not complete the
+experiment's strict stock-DLKM success criterion. Bluetooth peripheral I/O,
+an NFC tag transaction, audible playback, a live fingerprint match, and deep
+suspend also require owner-observed testing. No publication or stable
+promotion is authorized.
