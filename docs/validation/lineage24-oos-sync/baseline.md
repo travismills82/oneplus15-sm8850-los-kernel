@@ -58,7 +58,7 @@ The full OTA payload was extracted with verified
 |---|---:|---|
 | `boot.img` | 100,663,296 | `f7ee42343ee769df2ca1fe39e126dd9249b7b076de8258744ddcdce95a0f9611` |
 | `system_dlkm.img` | 8,327,168 | `aaf0f22d1cc88de30224551d6d24ee6291b223069fdd46b1508ef77489253a61` |
-| `vendor_dlkm.img` | 60,395,520 | `db08a3fd2d3a8f06bfdf8a3c68148ca095db0bdc6cc566bc1e3162dba9c52603` |
+| `vendor_dlkm.img` | 59,940,864 | `db08a3fd2d3a8f06bfdf8a3c68148ca095db0bdc6cc566bc1e3162dba9c52603` |
 | `vendor_boot.img` | 100,663,296 | `878ea1faa368d41ff3d2b6e708b3f8fbe4859b94fc83c21a96aebcdc0fb8cfcb` |
 | `dtbo.img` | 25,165,824 | `7bf984c12dd5171b832145c1f0801c2882b2527e518ac5c2f72144fb76e0ae10` |
 | `init_boot.img` | 8,388,608 | `c61c9a93ca31af434b8111979f1d4ff66dad4b88250d3beb76605ac661d2edd0` |
