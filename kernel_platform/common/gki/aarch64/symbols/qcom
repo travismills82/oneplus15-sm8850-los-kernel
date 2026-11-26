@@ -2992,6 +2992,7 @@
   __sg_page_iter_dma_next
   __sg_page_iter_next
   __sg_page_iter_start
+  shmem_file
   shmem_read_folio_gfp
   shmem_read_mapping_page_gfp
   show_rcu_gp_kthreads
