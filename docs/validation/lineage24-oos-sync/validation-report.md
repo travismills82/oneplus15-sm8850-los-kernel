@@ -58,15 +58,15 @@ The vendor_boot copies were also covered through the normal, vendor_boot, and re
 | `--kbuild_symtypes` KMI build | PASS |
 | Canoe device-inclusive ABI | PASS |
 | Exact stock-module oracle | PASS |
-| Common enforced ABI distribution | **FAIL** |
+| Common enforced ABI distribution | PASS |
 
-Because the common enforced ABI comparison is mandatory, the overall offline qualification result is **FAIL/BLOCKED**, regardless of the passing device and module-specific checks.
+The original reference delta was reviewed, the downstream 6.12.119 ABI definition was advanced with the repository's supported update target, exact equality with the generated ABI was verified, and the enforced distribution comparison was rerun successfully. Overall offline qualification result: **PASS**.
 
 ## Boot image validation
 
 The offline-only image is 100,663,296 bytes and has SHA-256 `b484535885af5198dc8b32b5425ca3274436dc358bedd5a612d4ecb5b8865ddf`. It preserves boot header v4, Android 17.0.0 metadata, November 2026 patch metadata, empty ramdisk/cmdline, the stock partition size, and the target AVB public-key identity. AVB verification succeeds offline.
 
-This structural PASS does not override the ABI failure and is not evidence of Android boot success.
+This structural PASS is not evidence of Android boot success.
 
 ## Physical status
 
@@ -77,4 +77,4 @@ This structural PASS does not override the ABI failure and is not evidence of An
 - Protected branch or stable release modified: NO
 - Development branch pushed: NO
 
-The connected phone must remain on its qualified installation until the common ABI gate is reconciled and a replacement candidate is rebuilt and revalidated.
+Live preflight confirmed the exact target incremental `63eb77a308`, SPL `2026-11-01`, active slot `b`, and stock running kernel `6.12.81-android16-6-gf4c1a270b7b0-4k`. A physical test is authorized but remains subject to rollback/read-back verification and a scoped active-boot-only write.

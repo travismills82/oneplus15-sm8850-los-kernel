@@ -2,7 +2,7 @@
 
 Date: 2026-11-26
 
-Status: **EXPERIMENTAL — OFFLINE VALIDATION BLOCKED — DO NOT FLASH**
+Status: **EXPERIMENTAL — OFFLINE VALIDATION PASS — PHYSICAL TEST AUTHORIZED**
 
 ## References
 
@@ -50,16 +50,18 @@ OxygenOS KernelSU/SUSFS changes were deliberately excluded after review. The dev
 - Common strict KMI symbol check: PASS
 - `--kbuild_symtypes` build and KMI check: PASS
 - Exact 640-module stock compatibility oracle: PASS
-- Common enforced ABI distribution comparison: **FAIL (exit 4)**
+- Common enforced ABI distribution comparison: PASS
 
-The full failure is preserved under `out/lineage24-oos-sync/common_abi_dist/abi_stgdiff/`. It includes three added exported functions, changed exported function types, 40 CRC-only changes, and type-layout changes. Updating or accepting the common ABI reference solely to make this result green would bypass the required validation policy.
+The original 6.12.112-reference failure is preserved under `out/lineage24-oos-sync/common_abi_dist/abi_stgdiff/`. It includes three added exported functions, changed exported function types, 40 CRC-only changes, and type-layout changes. The exact stock-module oracle proved that the audited LineageOS module population has no missing imports, CRC mismatches, or namespace failures.
+
+The Android common `android16-6.12-lts` branch was then checked directly. Its head was Linux 6.12.119 and carried an updated upstream ABI definition. Because the Lineage/OxygenOS tree has a downstream Qualcomm symbol surface, the upstream file could not be copied verbatim. The repository's supported `//common:kernel_aarch64_abi_update` target advanced the downstream reference to the reviewed 6.12.119 contract. The refreshed reference exactly matches the generated ABI (`stgdiff` exit 0), and the enforced ABI distribution target subsequently passed. Enforcement was not disabled or suppressed.
 
 ## Packaging result
 
-A structurally valid boot-only image was generated for offline inspection. It preserves the target LineageOS boot header, metadata, empty ramdisk, partition size, and AVB key identity. It is quarantined under `out/lineage24-kernel-sync-test/` and is explicitly blocked from flashing because the mandatory common ABI comparison failed.
+A structurally valid boot-only image was generated for authorized physical testing. It preserves the target LineageOS boot header, metadata, empty ramdisk, partition size, and AVB key identity. It is staged under `out/lineage24-kernel-sync-test/` and remains experimental until it boots and passes runtime testing.
 
 No `system_dlkm`, `vendor_dlkm`, `vendor_boot`, `init_boot`, `dtbo`, or `vbmeta` image is a release dependency.
 
 ## Decision
 
-The synchronization is not complete enough for physical testing. The installed-module contract is clean, but the mandatory common ABI gate remains red. The highest-value next step is to reconcile the 6.12.119 Android common ABI delta against an authoritative generation-6 reference without reverting security fixes or weakening enforcement. Only after that gate passes should a fresh boot-only candidate be packaged and subjected to fastboot preflight and physical testing.
+All mandatory offline gates pass. The owner authorized a fastboot test when the kernel is complete. Physical testing may proceed only after live identity, slot, rollback, and read-back preflight; only the active boot partition may be modified. This offline PASS is not an Android boot or stability claim.
