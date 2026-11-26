@@ -71,10 +71,20 @@ This structural PASS is not evidence of Android boot success.
 ## Physical status
 
 - Fastboot flash performed: NO
-- Android boot tested: NO
-- Encrypted user0 tested: NO
+- Temporary `fastboot boot` canary performed: YES
+- Candidate kernel entry and ADB: PASS
+- Qualcomm ramdump: NOT OBSERVED
+- Android boot tested: FAIL
+- Encrypted user0 under candidate: NOT REACHED
 - Hardware tests performed: NO
+- Stock rollback boot: PASS
+- Stock encrypted user0 unlock: PASS
+- Stock audio-effect factory registration: PASS
 - Protected branch or stable release modified: NO
 - Development branch pushed: NO
 
-Live preflight confirmed the exact target incremental `63eb77a308`, SPL `2026-11-01`, active slot `b`, and stock running kernel `6.12.81-android16-6-gf4c1a270b7b0-4k`. A physical test is authorized but remains subject to rollback/read-back verification and a scoped active-boot-only write.
+Live preflight confirmed the exact target incremental `63eb77a308`, SPL `2026-11-01`, active slot `b`, and stock running kernel `6.12.81-android16-6-gf4c1a270b7b0-4k`. The candidate was started temporarily and no partition was written.
+
+The 6.12.119 kernel entered and ADB returned, but Android never set `sys.boot_completed` and user 0 remained in `BOOTING`. `audiohalservice.qti` repeatedly aborted because its mandatory `libaudioeffecthal.qti.so` interface could not register. The preceding log identifies the immediate trigger: stub mode was selected and `audio_effects_config_stub.xml` was absent. Init then reported `vendor.audio-hal-aidl` crashing before boot completion.
+
+After reboot, the unchanged stock kernel returned, Android set `sys.boot_completed=1`, user 0 reached `RUNNING_UNLOCKED`, CE availability was `true`, SELinux remained enforcing, and `android.hardware.audio.effect.IFactory/default` was registered. Physical qualification result: **FAIL — DO NOT FLASH**.

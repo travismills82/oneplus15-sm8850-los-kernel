@@ -2,7 +2,7 @@
 
 Date: 2026-11-26
 
-Status: **EXPERIMENTAL — OFFLINE VALIDATION PASS — PHYSICAL TEST AUTHORIZED**
+Status: **EXPERIMENTAL — OFFLINE VALIDATION PASS — PHYSICAL CANARY FAILED — DO NOT FLASH**
 
 ## References
 
@@ -58,10 +58,18 @@ The Android common `android16-6.12-lts` branch was then checked directly. Its he
 
 ## Packaging result
 
-A structurally valid boot-only image was generated for authorized physical testing. It preserves the target LineageOS boot header, metadata, empty ramdisk, partition size, and AVB key identity. It is staged under `out/lineage24-kernel-sync-test/` and remains experimental until it boots and passes runtime testing.
+A structurally valid boot-only image was generated and exercised with the non-persistent `fastboot boot` command. It preserves the target LineageOS boot header, metadata, empty ramdisk, partition size, and AVB key identity. It is staged under `out/lineage24-kernel-sync-test/` only as a quarantined diagnostic artifact and must not be flashed.
 
 No `system_dlkm`, `vendor_dlkm`, `vendor_boot`, `init_boot`, `dtbo`, or `vbmeta` image is a release dependency.
 
+## Physical canary result
+
+Live preflight confirmed the exact OTA incremental, slot `b`, stock kernel, encryption state, SELinux enforcing state, and rollback artifact. The candidate was then started with `fastboot boot`; no partition was written.
+
+The candidate kernel entered, ADB returned, and the running release was confirmed as `6.12.119-android16-6-o-g7477d64d7643-4k`. It did not enter Qualcomm ramdump. Android nevertheless failed to complete boot. The Qualcomm audio HAL selected stub mode, could not find `audio_effects_config_stub.xml`, failed to register the mandatory `android.hardware.audio.effect.IFactory/default` interface, and repeatedly aborted. Init reported `vendor.audio-hal-aidl` as an updatable component crashing before boot completion, and the service loop prevented user 0 from reaching the unlocked state.
+
+The device was rebooted without flashing. It automatically returned to the original slot-`b` LineageOS boot image and kernel `6.12.81-android16-6-gf4c1a270b7b0-4k`. Android boot completed, the owner credential verified, user 0 reached `RUNNING_UNLOCKED`, CE storage became available, SELinux remained enforcing, and the stock audio-effect factory was registered.
+
 ## Decision
 
-All mandatory offline gates pass. The owner authorized a fastboot test when the kernel is complete. Physical testing may proceed only after live identity, slot, rollback, and read-back preflight; only the active boot partition may be modified. This offline PASS is not an Android boot or stability claim.
+All mandatory offline gates pass, but physical qualification fails. The candidate is not flashable and no persistent fastboot write was performed. The next candidate must contain one evidence-backed repair for the audio HAL stub-mode selection, pass the same offline gates, and first pass another temporary `fastboot boot` canary.
