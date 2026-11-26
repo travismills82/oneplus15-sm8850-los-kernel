@@ -7484,7 +7484,7 @@ err_alloc_device_names_failed:
 
 device_initcall(binder_init);
 
-int binder_use_rust = IS_BUILTIN(CONFIG_ANDROID_BINDER_IPC_RUST);
+int binder_use_rust;
 EXPORT_SYMBOL_GPL(binder_use_rust);
 static int binder_loaded;
 

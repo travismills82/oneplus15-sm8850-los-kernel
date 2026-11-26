@@ -41,6 +41,21 @@
 #include "gpiolib-sysfs.h"
 #include "gpiolib.h"
 
+/*
+ * Returning int is ABI-compatible with the legacy void interface for existing
+ * callers: the argument ABI is unchanged and old callers simply ignore x0.
+ * Keep the stable error-reporting API for new callers while retaining the
+ * ColorOS module version contract.
+ */
+ANDROID_KABI_TYPE_STRING("gpiod_set_raw_value",
+	"subprogram ( formal_parameter pointer_type { s#gpio_desc } desc , formal_parameter base_type int byte_size(4) encoding(5) value ) -> base_type void");
+ANDROID_KABI_TYPE_STRING("gpiod_set_raw_value_cansleep",
+	"subprogram ( formal_parameter pointer_type { s#gpio_desc } desc , formal_parameter base_type int byte_size(4) encoding(5) value ) -> base_type void");
+ANDROID_KABI_TYPE_STRING("gpiod_set_value",
+	"subprogram ( formal_parameter pointer_type { s#gpio_desc } desc , formal_parameter base_type int byte_size(4) encoding(5) value ) -> base_type void");
+ANDROID_KABI_TYPE_STRING("gpiod_set_value_cansleep",
+	"subprogram ( formal_parameter pointer_type { s#gpio_desc } desc , formal_parameter base_type int byte_size(4) encoding(5) value ) -> base_type void");
+
 #define CREATE_TRACE_POINTS
 #include <trace/events/gpio.h>
 
@@ -3586,16 +3601,17 @@ int gpiod_set_array_value_complex(bool raw, bool can_sleep,
 		} while ((i < array_size) &&
 			 gpio_device_chip_cmp(desc_array[i]->gdev, guard.gc));
 		/* push collected bits to outputs */
-		if (count != 0) {
+		ret = 0;
+		if (count != 0)
 			ret = gpiochip_set_multiple(guard.gc, mask, bits);
-			if (ret)
-				return ret;
-		}
 
 		if (mask != fastpath_mask)
 			bitmap_free(mask);
 		if (bits != fastpath_bits)
 			bitmap_free(bits);
+
+		if (ret)
+			return ret;
 	}
 	return 0;
 }

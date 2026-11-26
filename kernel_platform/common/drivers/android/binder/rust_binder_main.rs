@@ -321,23 +321,17 @@ impl kernel::Module for BinderModule {
             extern "C" {
                 static mut binder_use_rust: i32;
                 fn unload_binder() -> i32;
-                #[cfg(MODULE)]
                 fn binder_remove_trace_events(m: *mut bindings::module);
             }
 
             if binder_use_rust == 0 {
-                // A loadable driver owns its trace events through `struct module`,
-                // so the C helper can remove them when C Binder was selected. A
-                // built-in driver has no module owner; its separately namespaced
-                // trace events remain registered but dormant instead of risking
-                // removal of the active built-in C Binder trace events.
-                #[cfg(all(CONFIG_EVENT_TRACING, MODULE))]
+                #[cfg(CONFIG_EVENT_TRACING)]
                 binder_remove_trace_events(_module.as_ptr());
                 return Ok(Self { _netlink: None });
             }
             if unload_binder() != 0 {
                 pr_err!("Failed to unload C Binder.");
-                #[cfg(all(CONFIG_EVENT_TRACING, MODULE))]
+                #[cfg(CONFIG_EVENT_TRACING)]
                 binder_remove_trace_events(_module.as_ptr());
                 return Ok(Self { _netlink: None });
             }

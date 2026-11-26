@@ -16,6 +16,8 @@
 #include <linux/cpumask_types.h>
 
 #include <linux/cache.h>
+#include <linux/align.h>
+#include <linux/build_bug.h>
 #include <linux/irqflags_types.h>
 #include <linux/smp_types.h>
 #include <linux/pid_types.h>
@@ -866,6 +868,24 @@ struct task_struct {
 	int				normal_prio;
 	unsigned int			rt_priority;
 
+#if defined(CONFIG_SYSVIPC) && defined(CONFIG_ARM64) && defined(CONFIG_GENDWARFKSYMS)
+	/*
+	 * GKI has alignment padding before se. Keep IPC state naturally aligned
+	 * inside that gap, not in the vendor-visible tail or a packed overlay.
+	 * The assertions below reject configurations where it would not fit.
+	 */
+#ifndef __BINDGEN__
+	/*
+	 * Rust retains the old padding view of this gap. IPC lifecycle code is
+	 * C-only; exposing these unions renumbers bindgen's existing anonymous
+	 * types without changing any live field offset. Rust must not access
+	 * the private IPC state through its legacy task_struct view.
+	 */
+	ANDROID_KABI_IGNORE(0, struct sysv_sem sysvsem);
+	ANDROID_KABI_IGNORE(1, struct sysv_shm sysvshm);
+#endif
+#endif
+
 	struct sched_entity		se;
 	struct sched_rt_entity		rt;
 	struct sched_dl_entity		dl;
@@ -1172,7 +1192,7 @@ struct task_struct {
 
 	struct nameidata		*nameidata;
 
-#ifdef CONFIG_SYSVIPC
+#if defined(CONFIG_SYSVIPC) && (!defined(CONFIG_ARM64) || !defined(CONFIG_GENDWARFKSYMS))
 	struct sysv_sem			sysvsem;
 	struct sysv_shm			sysvshm;
 #endif
@@ -1687,6 +1707,18 @@ struct task_struct {
 	 */
 };
 
+#if defined(CONFIG_SYSVIPC) && defined(CONFIG_ARM64) && defined(CONFIG_GENDWARFKSYMS) && !defined(__BINDGEN__)
+static_assert(offsetof(struct task_struct, se) ==
+	      ALIGN(offsetof(struct task_struct, rt_priority) +
+		    sizeof(((struct task_struct *)0)->rt_priority),
+		    __alignof__(struct sched_entity)),
+	      "SysV IPC state must fit entirely in the pre-existing se alignment gap");
+static_assert(offsetof(struct task_struct, sysvsem) % __alignof__(struct sysv_sem) == 0);
+static_assert(offsetof(struct task_struct, sysvshm) % __alignof__(struct sysv_shm) == 0);
+static_assert(offsetof(struct task_struct, sysvshm) + sizeof(struct sysv_shm) <=
+	      offsetof(struct task_struct, se));
+#endif
+
 /*
  * Preserve the OxygenOS 16.0.10.601 task_struct type identity while keeping
  * the 6.12.89 user-dumpable semantics. The state occupies the low bit of the
@@ -1798,7 +1830,7 @@ extern struct pid __rcu *cad_pid;
 						 * I am cleaning dirty pages from some other bdi. */
 #define PF_KTHREAD		0x00200000	/* I am a kernel thread */
 #define PF_RANDOMIZE		0x00400000	/* Randomize virtual address space */
-#define PF_NO_NOTIFY_SIGNAL	0x00800000	/* see no_notify_signal_save() */
+#define PF__HOLE__00800000	0x00800000	/* OPlus PF_MEMALLOC_BOOST */
 #define PF__HOLE__01000000	0x01000000
 #define PF__HOLE__02000000	0x02000000
 #define PF_NO_SETAFFINITY	0x04000000	/* Userland is not allowed to meddle with cpus_mask */
@@ -1861,6 +1893,7 @@ static __always_inline bool is_user_task(struct task_struct *task)
 #define PFA_SPEC_IB_DISABLE		5	/* Indirect branch speculation restricted */
 #define PFA_SPEC_IB_FORCE_DISABLE	6	/* Indirect branch speculation permanently restricted */
 #define PFA_SPEC_SSB_NOEXEC		7	/* Speculative Store Bypass clear on execve() */
+#define PFA_NO_NOTIFY_SIGNAL		8	/* see no_notify_signal_save() */
 
 #define TASK_PFA_TEST(name, func)					\
 	static inline bool task_##func(struct task_struct *p)		\
@@ -1876,6 +1909,8 @@ static __always_inline bool is_user_task(struct task_struct *task)
 
 TASK_PFA_TEST(NO_NEW_PRIVS, no_new_privs)
 TASK_PFA_SET(NO_NEW_PRIVS, no_new_privs)
+
+TASK_PFA_TEST(NO_NOTIFY_SIGNAL, no_notify_signal)
 
 TASK_PFA_TEST(SPREAD_PAGE, spread_page)
 TASK_PFA_SET(SPREAD_PAGE, spread_page)
