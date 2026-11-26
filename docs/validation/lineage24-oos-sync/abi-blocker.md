@@ -11,6 +11,8 @@ The comparison reports:
 
 The exact installed LineageOS module oracle passes with zero missing imports, CRC mismatches, or namespace failures. That result proves compatibility with the audited OTA module population, but it does not make a failing mandatory common ABI reference check optional.
 
+The reference provenance was checked directly. `HEAD` and `oos/main` both contain the identical `kernel_platform/common/gki/aarch64/abi.stg` blob `ad11011844b1ad8f68d164eb9590b79ce43b1be8`. Its latest history entry is `8dd9cb4790b7436a12606c842f8e222701be3e61`, dated 2026-10-07 and explicitly reconstructed for the qualified 6.12.112 ABI. Therefore no newer authoritative 6.12.119 reference exists in the OxygenOS source branch to import.
+
 The following were intentionally not done:
 
 - The ABI reference was not updated merely to accept the new output.
