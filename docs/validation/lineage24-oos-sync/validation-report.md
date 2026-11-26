@@ -14,10 +14,10 @@ Date: 2026-11-26
 
 ## Kernel evidence
 
-- Kernel release: `6.12.119-android16-6-o-g7477d64d7643-4k`
+- Kernel release: `6.12.119-android16-6-o-g46d53f13f126-4k`
 - `Image` size: 43,383,296 bytes
-- `Image` SHA-256: `324277e6412c161a99378603c5d82030b094900152d3f67eb282f707d9a08181`
-- `vmlinux` SHA-256: `5bd163eee359298b5ab73d657b77be23cdcbc3bfaa80313eee896e4670eb6a4b`
+- `Image` SHA-256: `cbe74e11b734eb6b9b6204cfda42e959c35c9b076bd68791219676f2096540e4`
+- `vmlinux` SHA-256: `cac1c15b94ec4fa29e716f813d7791a8747b87ca9bc01c53f5342a86b567dc13`
 - `Module.symvers` SHA-256: `8f67ca352ad38d8b690784be94a1e7f1c89764b3ec158ed802857c19a14662ea`
 - `modules.builtin` SHA-256: `4e25d13aab1e57642f2ad969d0f2ed3fb6162457df39e0b28f91a9a72d7e3712`
 
@@ -29,6 +29,7 @@ The effective configuration contains:
 - `CONFIG_MODVERSIONS=y`
 - `CONFIG_GENDWARFKSYMS=y`
 - `CONFIG_MODULE_SIG=y`
+- `CONFIG_MODULE_SIG_PROTECT=y`
 - `CONFIG_FS_ENCRYPTION_INLINE_CRYPT=y`
 
 `modules.builtin` records the Rust Binder object and `vmlinux` contains its initialization, open, and ioctl paths. No replacement `rust_binder.ko` is present in the candidate distribution.
@@ -45,9 +46,11 @@ The exact target OTA supplied 88 `system_dlkm` modules and 552 `vendor_dlkm` mod
 - MODVERSIONS CRC matches: 37,084
 - CRC mismatches: 0
 - Namespace failures: 0
-- Overall oracle result: PASS
+- Symbol/CRC/namespace oracle result: PASS
 
 The vendor_boot copies were also covered through the normal, vendor_boot, and recovery load lists. The stock module images themselves were not changed.
+
+The initial oracle did not prove that the candidate's built-in trusted key accepted every stock module under `CONFIG_MODULE_SIG_PROTECT`. Physical diagnostics showed that omission was material: November 25 stock `rfkill.ko` was rejected because the original candidate trusted the October 14 certificate. The repaired kernel embeds the exact November 25 certificate. A separate CMS audit verified all 109 signed modules, while the protected-export audit accounted for 108 protected modules, 494 protected exports, and all active unsigned consumers with zero failures. Overall module compatibility is PASS for the repaired candidate.
 
 ## ABI and KMI checks
 
@@ -57,34 +60,35 @@ The vendor_boot copies were also covered through the normal, vendor_boot, and re
 | Common KMI symbol allowlist | PASS |
 | `--kbuild_symtypes` KMI build | PASS |
 | Canoe device-inclusive ABI | PASS |
-| Exact stock-module oracle | PASS |
+| Exact stock-module symbol/CRC oracle | PASS |
+| Runtime protected-export trust | PASS in repaired candidate |
 | Common enforced ABI distribution | PASS |
 
-The original reference delta was reviewed, the downstream 6.12.119 ABI definition was advanced with the repository's supported update target, exact equality with the generated ABI was verified, and the enforced distribution comparison was rerun successfully. Overall offline qualification result: **PASS**.
+The original reference delta was reviewed, the downstream 6.12.119 ABI definition was advanced with the repository's supported update target, exact equality with the generated ABI was verified, and the enforced distribution comparison was rerun successfully. ABI/KMI and repaired module-trust qualification passed.
 
 ## Boot image validation
 
-The offline-only image is 100,663,296 bytes and has SHA-256 `b484535885af5198dc8b32b5425ca3274436dc358bedd5a612d4ecb5b8865ddf`. It preserves boot header v4, Android 17.0.0 metadata, November 2026 patch metadata, empty ramdisk/cmdline, the stock partition size, and the target AVB public-key identity. AVB verification succeeds offline.
+The repaired image is 100,663,296 bytes and has SHA-256 `5cbfcbae7e59d2786fbd935cca6c264354a90b7f510f637d11af4f4db9cfe6ee`. It preserves boot header v4, Android 17.0.0 metadata, November 2026 patch metadata, empty ramdisk/cmdline, stock partition size, AVB 1.4.0 release string, rollback index, salt, properties, and public-key identity. AVB verification succeeds.
 
-This structural PASS is not evidence of Android boot success.
+The structural PASS is independently backed by temporary and persistent physical boot success.
 
 ## Physical status
 
-- Fastboot flash performed: NO
+- Fastboot flash performed: YES, `boot_b` only
 - Temporary `fastboot boot` canary performed: YES
 - Candidate kernel entry and ADB: PASS
 - Qualcomm ramdump: NOT OBSERVED
-- Android boot tested: FAIL
-- Encrypted user0 under candidate: NOT REACHED
-- Hardware tests performed: NO
+- Android boot tested: PASS
+- Encrypted user0 under candidate: PASS
+- Hardware/service smoke tests: PASS
 - Stock rollback boot: PASS
 - Stock encrypted user0 unlock: PASS
 - Stock audio-effect factory registration: PASS
 - Protected branch or stable release modified: NO
 - Development branch pushed: NO
 
-Live preflight confirmed the exact target incremental `63eb77a308`, SPL `2026-11-01`, active slot `b`, and stock running kernel `6.12.81-android16-6-gf4c1a270b7b0-4k`. The candidate was started temporarily and no partition was written.
+Live preflight confirmed incremental `63eb77a308`, SPL `2026-11-01`, active slot `b`, stock health, user0 unlock, and both candidate and rollback hashes. The repaired image first booted non-persistently. Android completed boot, user0 reached `RUNNING_UNLOCKED`, CE storage was accessible, SELinux remained enforcing, and the exact candidate kernel was running.
 
-The 6.12.119 kernel entered and ADB returned, but Android never set `sys.boot_completed` and user 0 remained in `BOOTING`. `audiohalservice.qti` repeatedly aborted because its mandatory `libaudioeffecthal.qti.so` interface could not register. The preceding log identifies the immediate trigger: stub mode was selected and `audio_effects_config_stub.xml` was absent. Init then reported `vendor.audio-hal-aidl` crashing before boot completion.
+Stock `rfkill`, `btpower`, `bt_fm_swr`, and `btfmcodec` loaded normally. The Canoe sound card registered, 49 sound nodes appeared, and `android.hardware.audio.effect.IFactory/default` registered. Built-in Rust Binder handled binderfs with no `rust_binder.ko` loaded. Wi-Fi, Bluetooth, LTE voice/data, NFC, five-camera enumeration, fingerprint, USB/ADB, charging, and short suspend/resume passed. Fatal-error and pstore checks were clean.
 
-After reboot, the unchanged stock kernel returned, Android set `sys.boot_completed=1`, user 0 reached `RUNNING_UNLOCKED`, CE availability was `true`, SELinux remained enforcing, and `android.hardware.audio.effect.IFactory/default` was registered. Physical qualification result: **FAIL — DO NOT FLASH**.
+After this canary passed, only active `boot_b` was flashed. The persistent reboot repeated the critical checks successfully. Read-only block-device read-back of `boot_b` exactly matched candidate SHA-256 `5cbfcbae7e59d2786fbd935cca6c264354a90b7f510f637d11af4f4db9cfe6ee`. Physical qualification result: **PASS for the tested scope**. Extended deep-suspend duration and hands-on camera/audio/call use remain ongoing-use tests rather than blockers found in this session.

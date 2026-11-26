@@ -2,14 +2,14 @@
 
 Date: 2026-11-26
 
-Status: **EXPERIMENTAL — OFFLINE VALIDATION PASS — PHYSICAL CANARY FAILED — DO NOT FLASH**
+Status: **EXPERIMENTAL — REPAIRED CANDIDATE PHYSICALLY BOOTED AND INSTALLED**
 
 ## References
 
 - Protected LineageOS branch: `Lineage-24.0`
 - Protected LineageOS revision: `f0a7e4961c02044f5f5394cdbaec320256168ce5`
 - Development branch: `development/lineage24-oos-kernel-sync`
-- Development revision before this report: `7477d64d76435bb184ea63f45172d99766f04a91`
+- Development revision: `46d53f13f126826b2e22f95017e6c86dce1277b4`
 - OxygenOS source reference: `oos/main` at `6cea96b68c5d7d968e7fc641448b518cbf863460`
 - Exact target OTA: `lineage-24.0-20261125-nightly-infiniti-signed.zip`
 - OTA SHA-256: `930b94f9e7e1b02d272b52b5c09f0ecda621dda0268a99aae845e87ffe4943ae`
@@ -34,7 +34,7 @@ The complete stable/common series through 6.12.119 supplies the remaining upstre
 
 - Rust Binder remains built into `vmlinux` with `CONFIG_ANDROID_BINDER_IPC_RUST=y`.
 - The stock `rust_binder.ko` can remain physically present in the untouched `system_dlkm`; the module-load contract is satisfied by the built-in implementation and no replacement DLKM is required.
-- The trusted LineageOS GKI module certificate remains configured.
+- The exact November 25 Lineage GKI module certificate is configured for the target nightly.
 - `CONFIG_MODVERSIONS=y`, `CONFIG_GENDWARFKSYMS=y`, and `CONFIG_MODULE_SIG=y` remain enabled.
 - FBE/F2FS inline encryption and the existing Qualcomm/Oplus configuration remain enabled.
 - Two exports required by retained Qualcomm modules were added without altering their implementation: `__mm_reset_vma_seqcounts` and `shmem_file`.
@@ -43,13 +43,15 @@ OxygenOS KernelSU/SUSFS changes were deliberately excluded after review. The dev
 
 ## Build result
 
-- Kernel release: `6.12.119-android16-6-o-g7477d64d7643-4k`
+- Kernel release: `6.12.119-android16-6-o-g46d53f13f126-4k`
 - Canoe production distribution: PASS
 - Rust linking: PASS
 - Device-inclusive Canoe ABI target: PASS
 - Common strict KMI symbol check: PASS
 - `--kbuild_symtypes` build and KMI check: PASS
-- Exact 640-module stock compatibility oracle: PASS
+- Exact 640-module symbol/CRC/namespace oracle: PASS
+- Exact 109-module signature verification: PASS
+- Protected-export contract: PASS
 - Common enforced ABI distribution comparison: PASS
 
 The original 6.12.112-reference failure is preserved under `out/lineage24-oos-sync/common_abi_dist/abi_stgdiff/`. It includes three added exported functions, changed exported function types, 40 CRC-only changes, and type-layout changes. The exact stock-module oracle proved that the audited LineageOS module population has no missing imports, CRC mismatches, or namespace failures.
@@ -58,18 +60,18 @@ The Android common `android16-6.12-lts` branch was then checked directly. Its he
 
 ## Packaging result
 
-A structurally valid boot-only image was generated and exercised with the non-persistent `fastboot boot` command. It preserves the target LineageOS boot header, metadata, empty ramdisk, partition size, and AVB key identity. It is staged under `out/lineage24-kernel-sync-test/` only as a quarantined diagnostic artifact and must not be flashed.
+A structurally valid repaired boot-only image was generated under `out/lineage24-kernel-sync-repaired-test/`. It preserves the target LineageOS boot header, metadata, empty ramdisk, partition size, AVB 1.4.0 release string, rollback index, salt, properties, and key identity. Its SHA-256 is `5cbfcbae7e59d2786fbd935cca6c264354a90b7f510f637d11af4f4db9cfe6ee`.
 
 No `system_dlkm`, `vendor_dlkm`, `vendor_boot`, `init_boot`, `dtbo`, or `vbmeta` image is a release dependency.
 
 ## Physical canary result
 
-Live preflight confirmed the exact OTA incremental, slot `b`, stock kernel, encryption state, SELinux enforcing state, and rollback artifact. The candidate was then started with `fastboot boot`; no partition was written.
+Live preflight confirmed the exact OTA incremental, slot `b`, stock kernel, encryption state, SELinux enforcing state, and rollback artifact. The repaired candidate was first started with `fastboot boot`; no partition was written during that canary.
 
-The candidate kernel entered, ADB returned, and the running release was confirmed as `6.12.119-android16-6-o-g7477d64d7643-4k`. It did not enter Qualcomm ramdump. Android nevertheless failed to complete boot. The Qualcomm audio HAL selected stub mode, could not find `audio_effects_config_stub.xml`, failed to register the mandatory `android.hardware.audio.effect.IFactory/default` interface, and repeatedly aborted. Init reported `vendor.audio-hal-aidl` as an updatable component crashing before boot completion, and the service loop prevented user 0 from reaching the unlocked state.
+The repaired candidate entered, ADB returned, and the running release was confirmed as `6.12.119-android16-6-o-g46d53f13f126-4k`. Android completed boot and user0/FBE/CE unlocked. The exact stock `rfkill`, `btpower`, `bt_fm_swr`, and `btfmcodec` chain loaded, the Canoe sound card and audio-effect factory registered, and Rust Binder remained built in. Wi-Fi, Bluetooth, LTE, NFC, camera enumeration, fingerprint, USB/ADB, charging, and short suspend/resume checks passed without a fatal kernel error or pstore record.
 
-The device was rebooted without flashing. It automatically returned to the original slot-`b` LineageOS boot image and kernel `6.12.81-android16-6-gf4c1a270b7b0-4k`. Android boot completed, the owner credential verified, user 0 reached `RUNNING_UNLOCKED`, CE storage became available, SELinux remained enforcing, and the stock audio-effect factory was registered.
+After the temporary canary passed, the owner-authorized persistent operation wrote only active `boot_b`. The persistent reboot repeated Android boot, FBE/CE, module/audio, hardware-service, and suspend/resume checks successfully. Read-only `boot_b` block-device hashing exactly matched the candidate image.
 
 ## Decision
 
-All mandatory offline gates pass, but physical qualification fails. The candidate is not flashable and no persistent fastboot write was performed. The next candidate must contain one evidence-backed repair for the audio HAL stub-mode selection, pass the same offline gates, and first pass another temporary `fastboot boot` canary.
+The original failed image remains quarantined. Commit `46d53f13f126` installs the exact public certificate extracted from the November 25 stock kernel and points `CONFIG_SYSTEM_TRUSTED_KEYS` to it; enforcement remains enabled. Production, ABI/KMI, exact stock-module, packaging, temporary-canary, and persistent-boot qualification all passed for the tested scope. No branch was pushed and no stable release or tag was modified.
