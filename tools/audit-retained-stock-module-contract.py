@@ -226,6 +226,16 @@ def parse_args() -> argparse.Namespace:
         metavar="PARTITION:MODULE",
         help="a retained module intentionally prohibited from supported load lists",
     )
+    parser.add_argument(
+        "--builtin-satisfied",
+        action="append",
+        default=[],
+        metavar="PARTITION:MODULE",
+        help=(
+            "an active stock load request that the candidate kernel explicitly "
+            "satisfies with a built-in implementation before relocation"
+        ),
+    )
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--dependency-out", type=Path, required=True)
     parser.add_argument("--summary-out", type=Path, required=True)
@@ -288,9 +298,18 @@ def main() -> int:
             load_modes[partition][module].add(mode)
 
     forbidden = {split_module_assignment(value, "--forbidden-load") for value in args.forbidden_load}
+    builtin_satisfied = {
+        split_module_assignment(value, "--builtin-satisfied")
+        for value in args.builtin_satisfied
+    }
+    if forbidden & builtin_satisfied:
+        die("a module cannot be both forbidden and satisfied by a built-in implementation")
     for partition, module in forbidden:
         if load_modes.get(partition, {}).get(module):
             die(f"forbidden dormant module is present in a supported load list: {partition}:{module}")
+    for partition, module in builtin_satisfied:
+        if not load_modes.get(partition, {}).get(module):
+            die(f"built-in-satisfied module is absent from supported load lists: {partition}:{module}")
 
     stock_signer = certificate_cn(args.stock_cert)
     project_signer = certificate_cn(args.project_cert)
@@ -332,6 +351,7 @@ def main() -> int:
     aggregate = defaultdict(int)
     focus_partition, focus_module = split_module_assignment(args.focus_module, "--focus-module")
     focus_found = False
+    builtin_seen: set[tuple[str, str]] = set()
 
     for partition, root in sorted(stock_roots.items()):
         records = ELF.scan_root(root, partition, "RETAINED_STOCK")
@@ -361,6 +381,57 @@ def main() -> int:
                 signing_contract = "PROJECT_TRUSTED"
             else:
                 signing_contract = "UNKNOWN_SIGNER"
+
+            if (partition, record.name) in builtin_satisfied:
+                if signing_contract == "UNKNOWN_SIGNER":
+                    die(
+                        "built-in-satisfied load request has an unknown signer: "
+                        f"{partition}:{record.name}"
+                    )
+                if args.undefined_out and (
+                    partition == focus_partition and record.name == focus_module
+                ):
+                    die(
+                        "--undefined-out is not meaningful for a module whose load "
+                        "request is satisfied before relocation"
+                    )
+                builtin_seen.add((partition, record.name))
+                totals["BUILTIN_SATISFIED"] += 1
+                rows.append(
+                    {
+                        "module": record.name,
+                        "partition": partition,
+                        "stock_path": str(record.path.relative_to(root)),
+                        "load_mode": load_mode,
+                        "classification": "BUILTIN_SATISFIED",
+                        "vermagic": vermagic,
+                        "vermagic_contract": "NOT_CONSUMED",
+                        "signature": signer,
+                        "signature_id": sig_id,
+                        "signing_contract": signing_contract,
+                        "imports": str(len(record.imports)),
+                        "undefined_elf_symbols": str(len(record.undefined)),
+                        "hard_required": "0",
+                        "weak_imports": "0",
+                        "versioned_imports": "0",
+                        "nonversioned_required": "0",
+                        "special_version_records": "0",
+                        "resolved": "0",
+                        "crc_matches": "0",
+                        "unresolved_imports": "0",
+                        "crc_mismatches": "0",
+                        "namespace_failures": "0",
+                        "provider_ambiguities": "0",
+                        "protected_export_failures": "0",
+                        "release_token": release_token,
+                        "reason": (
+                            "candidate kernel explicitly satisfies this exact active "
+                            "load request with its built-in implementation before "
+                            "vermagic, MODVERSIONS, allocation, relocation, or init"
+                        ),
+                    }
+                )
+                continue
 
             unresolved = 0
             mismatches = 0
@@ -661,6 +732,9 @@ def main() -> int:
     ]
     for path in (args.out, args.dependency_out, args.summary_out):
         path.parent.mkdir(parents=True, exist_ok=True)
+    if builtin_seen != builtin_satisfied:
+        missing = sorted(builtin_satisfied - builtin_seen)
+        die(f"built-in-satisfied module was not found in the stock roots: {missing}")
     with args.out.open("w", encoding="utf-8", newline="") as output:
         writer = csv.DictWriter(output, fieldnames=header, delimiter="\t", lineterminator="\n")
         writer.writeheader()
@@ -717,6 +791,7 @@ def main() -> int:
                 f"kernel_release={args.kernel_release}",
                 f"expected_vermagic={args.expected_vermagic}",
                 f"compatible={totals['COMPATIBLE']}",
+                f"builtin_satisfied={totals['BUILTIN_SATISFIED']}",
                 f"dormant={totals['DORMANT']}",
                 f"blocker={totals['BLOCKER']}",
                 f"undefined_elf_symbols={aggregate['undefined']}",

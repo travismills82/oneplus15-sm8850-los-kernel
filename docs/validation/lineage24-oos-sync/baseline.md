@@ -62,7 +62,7 @@ The full OTA payload was extracted with verified
 | `vendor_boot.img` | 100,663,296 | `878ea1faa368d41ff3d2b6e708b3f8fbe4859b94fc83c21a96aebcdc0fb8cfcb` |
 | `dtbo.img` | 25,165,824 | `7bf984c12dd5171b832145c1f0801c2882b2527e518ac5c2f72144fb76e0ae10` |
 | `init_boot.img` | 8,388,608 | `c61c9a93ca31af434b8111979f1d4ff66dad4b88250d3beb76605ac661d2edd0` |
-| `vbmeta.img` | 12,288 | `f2167c358cc2033d925cfa65357773f5fb8efb274935507f740bea2e7e85c94f` |
+| `vbmeta.img` | 12,288 | `f2167c358cc2033d925cfa65357773f5fb8ef774935507f740bea2e7e85c94f` |
 
 The OTA `boot.img` embeds
 `6.12.81-android16-6-gf4c1a270b7b0-4k`. The extracted EROFS filesystems pass
