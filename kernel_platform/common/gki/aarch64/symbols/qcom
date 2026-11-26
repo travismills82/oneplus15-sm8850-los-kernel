@@ -1950,6 +1950,7 @@
   __mmap_lock_do_trace_acquire_returned
   __mmap_lock_do_trace_released
   __mmap_lock_do_trace_start_locking
+  __mm_reset_vma_seqcounts
   mmc_cqe_request_done
   mmc_of_parse
   mmc_regulator_get_supply
